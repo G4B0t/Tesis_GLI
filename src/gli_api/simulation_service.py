@@ -1,5 +1,6 @@
 """Adapter between API inputs and the GLI calculation package."""
 
+from datetime import datetime, timezone
 from math import exp, pi
 from typing import List
 
@@ -14,6 +15,7 @@ from gli.parameters import (
 )
 from gli.simulation import prepare_initial_cycle
 
+from .database import save_simulation
 from .schemas import SimulationInputs, SimulationMetrics, SimulationPoint, SimulationResult
 
 
@@ -110,7 +112,8 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
     stage_1 = initial_cycle["stage_1"]
     points = build_stage_1_preview_points(inputs, stage_1)
 
-    return SimulationResult(
+    created_at = datetime.now(timezone.utc).isoformat()
+    result = SimulationResult(
         metrics=SimulationMetrics(
             rhoL=stage_1["rho_l"],
             pTo=stage_1["p_to"] * PA_TO_MPA,
@@ -119,4 +122,9 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
             duration=points[-1].t,
         ),
         points=points,
+        projectName=inputs.projectName,
+        projectistName=inputs.projectistName,
+        createdAt=created_at,
     )
+    simulation_id = save_simulation(inputs, result, created_at)
+    return result.model_copy(update={"simulationId": simulation_id})

@@ -1,6 +1,6 @@
 """API schemas shared by the GLI endpoints."""
 
-from typing import List
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -21,6 +21,8 @@ class SimulationInputs(BaseModel):
     bsw: float = Field(ge=0.0, le=100.0)
     gasRelativeDensity: float = Field(gt=0.0)
     casingPressureOpenRatio: float = Field(gt=0.0)
+    projectName: str = Field(min_length=1, max_length=120)
+    projectistName: str = Field(min_length=1, max_length=120)
 
 
 class SimulationMetrics(BaseModel):
@@ -45,5 +47,32 @@ class SimulationPoint(BaseModel):
 class SimulationResult(BaseModel):
     """Response contract consumed by the React frontend."""
 
+    metrics: SimulationMetrics
+    points: List[SimulationPoint]
+    simulationId: Optional[int] = None
+    projectName: Optional[str] = None
+    projectistName: Optional[str] = None
+    createdAt: Optional[str] = None
+
+
+class SimulationSummary(BaseModel):
+    """Small record used to list previous simulations."""
+
+    simulationId: int
+    projectName: str
+    projectistName: str
+    createdAt: str
+    pTo: float
+    duration: float
+
+
+class StoredSimulation(BaseModel):
+    """Full persisted simulation record."""
+
+    simulationId: int
+    projectName: str
+    projectistName: str
+    createdAt: str
+    inputs: SimulationInputs
     metrics: SimulationMetrics
     points: List[SimulationPoint]

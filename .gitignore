@@ -19,6 +19,8 @@ outputs/simulations/*
 data/raw/*
 data/processed/*
 data/reference_cases/*
+data/*.sqlite3
+data/*.sqlite3-*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 !data/reference_cases/.gitkeep

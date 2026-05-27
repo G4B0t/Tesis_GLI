@@ -38,6 +38,14 @@ Endpoints iniciales:
 
 - `GET /health`
 - `POST /simulate`
+- `GET /simulations`
+- `GET /simulations/{simulation_id}`
+
+Las corridas se guardan en SQLite:
+
+```text
+data/simulations.sqlite3
+```
 
 ## Primer objetivo
 
