@@ -27,6 +27,18 @@ D:\UPB\Tesis_GLI\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
+## Ejecutar API local
+
+```powershell
+D:\UPB\Tesis_GLI\.venv\Scripts\Activate.ps1
+uvicorn gli_api.main:app --app-dir src --reload --host 127.0.0.1 --port 8000
+```
+
+Endpoints iniciales:
+
+- `GET /health`
+- `POST /simulate`
+
 ## Primer objetivo
 
 Implementar primero las condiciones iniciales y la Etapa 1 del GLI:
