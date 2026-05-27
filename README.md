@@ -27,6 +27,37 @@ D:\UPB\Tesis_GLI\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
+## Configurar base de datos
+
+Crear un archivo `.env` local a partir de `.env.example`:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Variables principales para MySQL:
+
+```text
+GLI_DB_DRIVER=mysql
+GLI_DB_HOST=127.0.0.1
+GLI_DB_PORT=3306
+GLI_DB_NAME=tesis_gli
+GLI_DB_USER=gabriel
+GLI_DB_PASSWORD=tu_password
+```
+
+La base se crea automaticamente si el usuario tiene permisos. Tambien se puede
+crear manualmente en MySQL Workbench:
+
+```sql
+CREATE DATABASE tesis_gli
+CHARACTER SET utf8mb4
+COLLATE utf8mb4_unicode_ci;
+```
+
+La tabla `simulations` se crea automaticamente al ejecutar la primera
+simulacion.
+
 ## Ejecutar API local
 
 ```powershell
@@ -41,7 +72,7 @@ Endpoints iniciales:
 - `GET /simulations`
 - `GET /simulations/{simulation_id}`
 
-Las corridas se guardan en SQLite:
+Si `GLI_DB_DRIVER=sqlite`, las corridas se guardan en SQLite:
 
 ```text
 data/simulations.sqlite3

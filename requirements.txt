@@ -5,3 +5,5 @@ matplotlib
 pytest
 fastapi
 uvicorn[standard]
+pymysql
+python-dotenv
