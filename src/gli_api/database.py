@@ -8,11 +8,13 @@ import json
 import os
 import re
 import sqlite3
+from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Protocol
+from typing import List, Optional, Protocol, Union
 
 from dotenv import load_dotenv
 import pymysql
+from pymysql import OperationalError
 from pymysql.cursors import DictCursor
 
 from .schemas import (
@@ -146,8 +148,20 @@ class MySQLRepository:
         """Open MySQL and ensure the schema exists."""
 
         database_name = os.getenv("GLI_DB_NAME", "tesis_gli")
-        self.ensure_database(database_name)
-        connection = pymysql.connect(
+        try:
+            connection = self.open_connection(database_name)
+        except OperationalError as error:
+            if error.args[0] != 1049:
+                raise
+            self.ensure_database(database_name)
+            connection = self.open_connection(database_name)
+        self.initialize(connection)
+        return connection
+
+    def open_connection(self, database_name: str) -> pymysql.connections.Connection:
+        """Open a MySQL connection using the configured database."""
+
+        return pymysql.connect(
             host=os.getenv("GLI_DB_HOST", "127.0.0.1"),
             port=int(os.getenv("GLI_DB_PORT", "3306")),
             user=os.getenv("GLI_DB_USER", "root"),
@@ -157,8 +171,6 @@ class MySQLRepository:
             cursorclass=DictCursor,
             autocommit=False,
         )
-        self.initialize(connection)
-        return connection
 
     def ensure_database(self, database_name: str) -> None:
         """Create the configured MySQL database if it does not exist."""
@@ -188,23 +200,84 @@ class MySQLRepository:
             connection.close()
 
     def initialize(self, connection: pymysql.connections.Connection) -> None:
-        """Create MySQL table if needed."""
+        """Create MySQL tables if needed."""
 
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                CREATE TABLE IF NOT EXISTS simulations (
+                CREATE TABLE IF NOT EXISTS proyectistas (
                     id INT AUTO_INCREMENT PRIMARY KEY,
-                    project_name VARCHAR(120) NOT NULL,
-                    projectist_name VARCHAR(120) NOT NULL,
-                    created_at VARCHAR(40) NOT NULL,
-                    inputs_json JSON NOT NULL,
-                    metrics_json JSON NOT NULL,
-                    points_json JSON NOT NULL
+                    nombre_completo VARCHAR(120) NOT NULL,
+                    email VARCHAR(160) NULL,
+                    creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_proyectista_nombre (nombre_completo)
+                ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+                """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS proyectos (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    proyectista_id INT NOT NULL,
+                    nombre VARCHAR(160) NOT NULL,
+                    descripcion TEXT NULL,
+                    creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (proyectista_id) REFERENCES proyectistas(id),
+                    UNIQUE KEY uq_proyecto_por_proyectista (proyectista_id, nombre)
+                ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+                """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS simulaciones (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    proyecto_id INT NOT NULL,
+                    creado_en VARCHAR(40) NOT NULL,
+                    entradas_json JSON NOT NULL,
+                    metricas_json JSON NOT NULL,
+                    puntos_json JSON NOT NULL,
+                    FOREIGN KEY (proyecto_id) REFERENCES proyectos(id),
+                    INDEX idx_proyecto_id (proyecto_id),
+                    INDEX idx_creado_en (creado_en)
                 ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
                 """
             )
         connection.commit()
+
+    def get_or_create_projectist(
+        self,
+        cursor: DictCursor,
+        projectist_name: str,
+    ) -> int:
+        """Return existing projectist id or create it."""
+
+        cursor.execute(
+            """
+            INSERT INTO proyectistas (nombre_completo)
+            VALUES (%s)
+            ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)
+            """,
+            (projectist_name,),
+        )
+        return int(cursor.lastrowid)
+
+    def get_or_create_project(
+        self,
+        cursor: DictCursor,
+        projectist_id: int,
+        project_name: str,
+    ) -> int:
+        """Return existing project id or create it."""
+
+        cursor.execute(
+            """
+            INSERT INTO proyectos (proyectista_id, nombre)
+            VALUES (%s, %s)
+            ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)
+            """,
+            (projectist_id, project_name),
+        )
+        return int(cursor.lastrowid)
 
     def save_simulation(
         self,
@@ -217,19 +290,20 @@ class MySQLRepository:
         connection = self.connect()
         try:
             with connection.cursor() as cursor:
+                projectist_id = self.get_or_create_projectist(cursor, inputs.projectistName)
+                project_id = self.get_or_create_project(cursor, projectist_id, inputs.projectName)
                 cursor.execute(
                     """
-                    INSERT INTO simulations (
-                        project_name,
-                        projectist_name,
-                        created_at,
-                        inputs_json,
-                        metrics_json,
-                        points_json
+                    INSERT INTO simulaciones (
+                        proyecto_id,
+                        creado_en,
+                        entradas_json,
+                        metricas_json,
+                        puntos_json
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s)
                     """,
-                    serialized_values(inputs, result, created_at),
+                    serialized_values_mysql(project_id, inputs, result, created_at),
                 )
                 simulation_id = int(cursor.lastrowid)
             connection.commit()
@@ -245,9 +319,16 @@ class MySQLRepository:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT id, project_name, projectist_name, created_at, metrics_json
-                    FROM simulations
-                    ORDER BY id DESC
+                    SELECT
+                        s.id,
+                        p.nombre AS project_name,
+                        pr.nombre_completo AS projectist_name,
+                        s.creado_en AS created_at,
+                        s.metricas_json AS metrics_json
+                    FROM simulaciones s
+                    JOIN proyectos p ON p.id = s.proyecto_id
+                    JOIN proyectistas pr ON pr.id = p.proyectista_id
+                    ORDER BY s.id DESC
                     LIMIT %s
                     """,
                     (limit,),
@@ -265,9 +346,18 @@ class MySQLRepository:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT *
-                    FROM simulations
-                    WHERE id = %s
+                    SELECT
+                        s.id,
+                        p.nombre AS project_name,
+                        pr.nombre_completo AS projectist_name,
+                        s.creado_en AS created_at,
+                        s.entradas_json AS inputs_json,
+                        s.metricas_json AS metrics_json,
+                        s.puntos_json AS points_json
+                    FROM simulaciones s
+                    JOIN proyectos p ON p.id = s.proyecto_id
+                    JOIN proyectistas pr ON pr.id = p.proyectista_id
+                    WHERE s.id = %s
                     """,
                     (simulation_id,),
                 )
@@ -296,7 +386,24 @@ def serialized_values(
     )
 
 
-def summary_from_row(row: sqlite3.Row | dict) -> SimulationSummary:
+def serialized_values_mysql(
+    project_id: int,
+    inputs: SimulationInputs,
+    result: SimulationResult,
+    created_at: str,
+) -> tuple:
+    """Serialize simulation values for normalized MySQL storage."""
+
+    return (
+        project_id,
+        created_at,
+        inputs.model_dump_json(),
+        result.metrics.model_dump_json(),
+        json.dumps([point.model_dump() for point in result.points]),
+    )
+
+
+def summary_from_row(row: Union[sqlite3.Row, dict]) -> SimulationSummary:
     """Build a summary schema from a SQL row."""
 
     metrics = SimulationMetrics.model_validate_json(row["metrics_json"])
@@ -304,24 +411,33 @@ def summary_from_row(row: sqlite3.Row | dict) -> SimulationSummary:
         simulationId=row["id"],
         projectName=row["project_name"],
         projectistName=row["projectist_name"],
-        createdAt=row["created_at"],
+        createdAt=created_at_from_row(row["created_at"]),
         pTo=metrics.pTo,
         duration=metrics.duration,
     )
 
 
-def stored_from_row(row: sqlite3.Row | dict) -> StoredSimulation:
+def stored_from_row(row: Union[sqlite3.Row, dict]) -> StoredSimulation:
     """Build a full stored simulation schema from a SQL row."""
 
     return StoredSimulation(
         simulationId=row["id"],
         projectName=row["project_name"],
         projectistName=row["projectist_name"],
-        createdAt=row["created_at"],
+        createdAt=created_at_from_row(row["created_at"]),
         inputs=SimulationInputs.model_validate_json(row["inputs_json"]),
         metrics=SimulationMetrics.model_validate_json(row["metrics_json"]),
         points=[SimulationPoint.model_validate(point) for point in json.loads(row["points_json"])],
     )
+
+
+def created_at_from_row(value: Union[str, datetime]) -> str:
+    """Normalize SQL date values to API strings."""
+
+    if isinstance(value, datetime):
+        return value.isoformat()
+
+    return value
 
 
 def repository() -> Repository:

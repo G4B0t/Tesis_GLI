@@ -55,8 +55,13 @@ CHARACTER SET utf8mb4
 COLLATE utf8mb4_unicode_ci;
 ```
 
-La tabla `simulations` se crea automaticamente al ejecutar la primera
-simulacion.
+Las tablas `proyectistas`, `proyectos` y `simulaciones` se crean
+automaticamente al ejecutar la primera simulacion. El script reproducible esta
+en:
+
+```text
+database/migrations/001_create_initial_schema.sql
+```
 
 ## Ejecutar API local
 
