@@ -73,7 +73,8 @@ uvicorn gli_api.main:app --app-dir src --reload --host 127.0.0.1 --port 8000
 Endpoints iniciales:
 
 - `GET /health`
-- `POST /simulate`
+- `POST /simulate`: calcula y devuelve puntos para graficar sin guardar.
+- `POST /simulations`: calcula y guarda la corrida en la base de datos.
 - `GET /simulations`
 - `GET /simulations/{simulation_id}`
 

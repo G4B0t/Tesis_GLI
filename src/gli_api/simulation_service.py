@@ -15,7 +15,7 @@ from gli.parameters import (
 )
 from gli.simulation import prepare_initial_cycle
 
-from .database import save_simulation
+from .database import save_simulation as persist_simulation
 from .schemas import SimulationInputs, SimulationMetrics, SimulationPoint, SimulationResult
 
 
@@ -105,7 +105,7 @@ def build_stage_1_preview_points(
 
 
 def simulate(inputs: SimulationInputs) -> SimulationResult:
-    """Run the current backend simulation preview."""
+    """Run the current backend simulation preview without saving it."""
 
     params = build_parameters(inputs)
     initial_cycle = prepare_initial_cycle(params)
@@ -126,5 +126,13 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
         projectistName=inputs.projectistName,
         createdAt=created_at,
     )
-    simulation_id = save_simulation(inputs, result, created_at)
+    return result
+
+
+def save_simulation_run(inputs: SimulationInputs) -> SimulationResult:
+    """Run and persist a simulation in the configured database."""
+
+    result = simulate(inputs)
+    created_at = result.createdAt or datetime.now(timezone.utc).isoformat()
+    simulation_id = persist_simulation(inputs, result, created_at)
     return result.model_copy(update={"simulationId": simulation_id})

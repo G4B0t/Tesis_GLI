@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .database import get_simulation, list_simulations
 from .schemas import SimulationInputs, SimulationResult, SimulationSummary, StoredSimulation
-from .simulation_service import simulate
+from .simulation_service import save_simulation_run, simulate
 
 
 app = FastAPI(
@@ -36,14 +36,21 @@ def health() -> dict:
 
 @app.post("/simulate", response_model=SimulationResult)
 def run_simulation(inputs: SimulationInputs) -> SimulationResult:
-    """Run the current GLI simulation preview."""
+    """Run the current GLI simulation preview without saving it."""
 
     return simulate(inputs)
 
 
+@app.post("/simulations", response_model=SimulationResult)
+def create_simulation(inputs: SimulationInputs) -> SimulationResult:
+    """Run and save a GLI simulation."""
+
+    return save_simulation_run(inputs)
+
+
 @app.get("/simulations", response_model=list[SimulationSummary])
 def recent_simulations(limit: int = 20) -> list[SimulationSummary]:
-    """Return recent simulations saved in SQLite."""
+    """Return recent simulations saved in the configured database."""
 
     return list_simulations(limit=limit)
 
