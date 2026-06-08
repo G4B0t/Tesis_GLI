@@ -67,7 +67,7 @@ database/migrations/001_create_initial_schema.sql
 
 ```powershell
 D:\UPB\Tesis_GLI\.venv\Scripts\Activate.ps1
-uvicorn gli_api.main:app --app-dir src --reload --host 127.0.0.1 --port 8000
+uvicorn gli_api.main:app --app-dir src --reload --host 127.0.0.1 --port 8008
 ```
 
 Endpoints iniciales:
