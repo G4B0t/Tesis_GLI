@@ -1,11 +1,18 @@
-"""HTTP API for the GLI backend."""
+﻿"""HTTP API for the GLI backend."""
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from .database import get_simulation, list_simulations
-from .schemas import SimulationInputs, SimulationResult, SimulationSummary, StoredSimulation
+from .schemas import (
+    SimulationInputs,
+    SimulationResult,
+    SimulationSummary,
+    StoredSimulation,
+    ValidationReference,
+)
 from .simulation_service import save_simulation_run, simulate
+from .validation_reference import get_gli_conventional_reference
 
 
 app = FastAPI(
@@ -32,6 +39,13 @@ def health() -> dict:
     """Return a small status payload for frontend connection checks."""
 
     return {"status": "ok"}
+
+
+@app.get("/validation/gli-convencional", response_model=ValidationReference)
+def gli_conventional_validation_reference() -> ValidationReference:
+    """Return Santos reference charts and tables for GLI convencional."""
+
+    return get_gli_conventional_reference()
 
 
 @app.post("/simulate", response_model=SimulationResult)
