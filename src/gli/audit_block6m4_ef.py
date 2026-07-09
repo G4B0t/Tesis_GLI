@@ -46,6 +46,13 @@ class Block6M4Audit:
     failed_contracts: tuple[str, ...]
     residuals: tuple[ResidualEF, ...]
     ef_initial_state_source: str | None
+    corrected_event_f_time_s: float | None = None
+    corrected_event_f_reached: bool = False
+    corrected_certified: bool = False
+    corrected_max_residual_normalized: float = 0.0
+    corrected_failed_contracts: tuple[str, ...] = ()
+    corrected_residuals: tuple[ResidualEF, ...] = ()
+    corrected_initial_state_source: str | None = None
 
 
 def _film_thickness_from_volume(params, film_volume_m3: float) -> float:
@@ -317,6 +324,7 @@ def audit_ef_boundary(params=None, *, max_step_s: float = 0.2) -> Block6M4Audit:
     failed = tuple(r.name for r in residuals if r.status != "ok")
     max_norm = max((r.normalized for r in residuals), default=0.0)
     can_receive = not failed and "recovered algebraically" not in ef.initial_state_source.lower()
+    corrected_residuals, corrected_meta = _audit_corrected_route(p, de, rho_l, y_e, gas_density_e, film_velocity_e)
     return Block6M4Audit(
         event_e_time_s=float(de.event_e_time_s),
         event_f_time_s=float(ef.event_f_time_s) if ef.event_f_reached else None,
@@ -327,7 +335,104 @@ def audit_ef_boundary(params=None, *, max_step_s: float = 0.2) -> Block6M4Audit:
         failed_contracts=failed,
         residuals=tuple(residuals),
         ef_initial_state_source=ef.initial_state_source,
+        corrected_event_f_time_s=corrected_meta["event_f_time_s"],
+        corrected_event_f_reached=corrected_meta["event_f_reached"],
+        corrected_certified=corrected_meta["corrected_certified"],
+        corrected_max_residual_normalized=max((r.normalized for r in corrected_residuals), default=0.0),
+        corrected_failed_contracts=tuple(r.name for r in corrected_residuals if r.status != "ok"),
+        corrected_residuals=tuple(corrected_residuals),
+        corrected_initial_state_source=corrected_meta["initial_state_source"],
     )
+
+
+def _audit_corrected_route(p, de, rho_l, y_e, gas_density_e, film_velocity_e):
+    residuals: list[ResidualEF] = []
+    ef = simulate_stage_e_to_f(p, stage_d_e=de, rhs_mode="santos_corrected", max_step_s=0.01)
+    produced_e = float(de.produced_volume_m3[-1])
+    fallback_e = float(de.fallback_volume_m3[-1])
+    liquid_e = float(de.film_volume_m3[-1]) + produced_e + fallback_e
+    liquid_ef_initial = (
+        float(ef.film_volume_m3[0])
+        + float(ef.produced_film_volume_m3[0])
+        + float(ef.fallback_volume_m3[0])
+    )
+
+    _add_residual(
+        residuals, name="corrected_rho_g_continuity", contract="rho_g(E+) - rho_g(E-) = 0",
+        value=float(ef.gas_density_kg_m3[0]) - gas_density_e, scale=max(abs(gas_density_e), 1.0),
+        units="kg/m3", tolerance=1e-8, interpretation="rho_g se recibe por identidad desde D->E corregido."
+    )
+    _add_residual(
+        residuals, name="corrected_m_g_continuity", contract="m_g(E+) - m_g(E-) = 0",
+        value=float(ef.gas_mass_kg[0]) - float(de.bubble_mass_kg[-1]),
+        scale=max(abs(float(de.bubble_mass_kg[-1])), 1.0), units="kg", tolerance=1e-8,
+        interpretation="m_g se recibe por identidad desde D->E corregido."
+    )
+    _add_residual(
+        residuals, name="corrected_P_t1_continuity", contract="P_t1(E+) - P_t1(E-) = 0",
+        value=float(ef.tubing_pressure_pa[0]) - float(de.p_tubing_pa[-1]),
+        scale=max(abs(float(de.p_tubing_pa[-1])), 1.0), units="Pa", tolerance=1e-8,
+        interpretation="P_t1 se recibe por identidad desde D->E corregido."
+    )
+    _add_residual(
+        residuals, name="corrected_v_g_memory", contract="v_g(E+) - v_g(E-) = 0",
+        value=float(ef.gas_velocity_m_s[0]) - float(de.v_b_m_s[-1]),
+        scale=max(abs(float(de.v_b_m_s[-1])), 1.0), units="m/s", tolerance=1e-12,
+        interpretation="v_g ya no se recalcula desde descarga superficial."
+    )
+    _add_residual(
+        residuals, name="corrected_v_f_memory", contract="v_f(E+) - v_f(E-) = 0",
+        value=float(ef.film_velocity_m_s[0]) - film_velocity_e,
+        scale=max(abs(film_velocity_e), 1.0), units="m/s", tolerance=1e-12,
+        interpretation="v_f ya no se reconstruye algebraicamente."
+    )
+    _add_residual(
+        residuals, name="corrected_y_continuity", contract="y(E+) - y(E-) = 0",
+        value=float(ef.film_thickness_m[0]) - y_e, scale=max(abs(y_e), 1e-6),
+        units="m", tolerance=1e-8, interpretation="El espesor de película es continuo."
+    )
+    _add_residual(
+        residuals, name="corrected_fallback_ledger", contract="fallback(E+) - fallback(E-) = 0",
+        value=float(ef.fallback_volume_m3[0]) - fallback_e, scale=max(abs(fallback_e), 1.0),
+        units="m3", tolerance=1e-12, interpretation="El ledger fallback acumulado se transporta."
+    )
+    _add_residual(
+        residuals, name="corrected_produced_ledger", contract="producido(E+) - producido(E-) = 0",
+        value=float(ef.produced_film_volume_m3[0]) - produced_e, scale=max(abs(produced_e), 1.0),
+        units="m3", tolerance=1e-12, interpretation="El producido acumulado no se reinicia."
+    )
+    _add_residual(
+        residuals, name="corrected_glv_closed_no_reopen", contract="GLV cerrada y sin reapertura",
+        value=float(np.max(ef.valve_open.astype(float))), scale=1.0, units="booleano", tolerance=0.0,
+        interpretation="E->F corregido conserva la frontera GLV cerrada."
+    )
+    _add_residual(
+        residuals, name="corrected_gas_balance", contract="m_g + gas producido = constante",
+        value=float(ef.gas_balance_relative_error), scale=1.0, units="adim.", tolerance=1e-8,
+        interpretation="Balance acumulado de gas en E->F corregido."
+    )
+    _add_residual(
+        residuals, name="corrected_liquid_balance", contract="film + producido + fallback = constante",
+        value=float(ef.liquid_balance_relative_error), scale=1.0, units="adim.", tolerance=1e-8,
+        interpretation="Balance líquido acumulado incluyendo ledgers previos."
+    )
+    descending = bool(ef.event_f_reached and len(ef.film_velocity_m_s) >= 2 and ef.film_velocity_m_s[-2] > ef.film_velocity_m_s[-1] >= -1e-7)
+    _add_residual(
+        residuals, name="corrected_event_f_descending", contract="F: v_f = 0 con cruce descendente",
+        value=0.0 if descending else 1.0, scale=1.0, units="adim.", tolerance=0.0,
+        interpretation="El evento terminal F se certifica por cruce descendente de v_f."
+    )
+    _add_residual(
+        residuals, name="corrected_liquid_inventory_initial", contract="I_liq(E+) - I_liq(E-) = 0",
+        value=liquid_ef_initial - liquid_e, scale=max(abs(liquid_e), 1.0), units="m3", tolerance=1e-10,
+        interpretation="La ruta corregida inicia con el inventario líquido acumulado completo."
+    )
+    return residuals, {
+        "event_f_time_s": float(ef.event_f_time_s) if ef.event_f_reached else None,
+        "event_f_reached": bool(ef.event_f_reached),
+        "corrected_certified": bool(ef.corrected_certified and not any(r.status != "ok" for r in residuals)),
+        "initial_state_source": ef.initial_state_source,
+    }
 
 
 def audit_summary(params=None, *, max_step_s: float = 0.2) -> dict[str, Any]:

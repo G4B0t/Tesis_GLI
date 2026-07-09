@@ -54,6 +54,40 @@ def test_glv_remains_closed_in_audited_ef_path(audit):
     assert by_name["glv_closed_no_reopen"].value == 0.0
 
 
+def test_santos_corrected_ef_receives_e_without_projection(audit):
+    assert audit.corrected_certified
+    assert audit.corrected_event_f_reached
+    assert audit.corrected_event_f_time_s is not None
+    assert audit.corrected_failed_contracts == ()
+    assert audit.corrected_max_residual_normalized < 1e-8
+    assert "transported without projection" in audit.corrected_initial_state_source
+
+
+def test_santos_corrected_ef_continuity_and_ledgers(audit):
+    by_name = {r.name: r for r in audit.corrected_residuals}
+    for name in (
+        "corrected_rho_g_continuity",
+        "corrected_m_g_continuity",
+        "corrected_P_t1_continuity",
+        "corrected_v_g_memory",
+        "corrected_v_f_memory",
+        "corrected_y_continuity",
+        "corrected_fallback_ledger",
+        "corrected_produced_ledger",
+    ):
+        assert by_name[name].status == "ok"
+        assert by_name[name].normalized < 1e-8
+
+
+def test_santos_corrected_ef_balances_glv_and_event_f(audit):
+    by_name = {r.name: r for r in audit.corrected_residuals}
+    assert by_name["corrected_glv_closed_no_reopen"].status == "ok"
+    assert by_name["corrected_gas_balance"].status == "ok"
+    assert by_name["corrected_liquid_balance"].status == "ok"
+    assert by_name["corrected_liquid_inventory_initial"].status == "ok"
+    assert by_name["corrected_event_f_descending"].status == "ok"
+
+
 def test_public_api_remains_provisional_and_stops_at_e():
     inputs = SimulationInputs(
         tubingDiameter=0.050673,
@@ -73,4 +107,3 @@ def test_public_api_remains_provisional_and_stops_at_e():
     assert result.terminalEvent == "E_SLUG_BASE_REACHED_SURFACE"
     assert "E_TO_F decompression is not implemented" in result.physicalScope
     assert result.points[-1].stage == "D_E"
-
