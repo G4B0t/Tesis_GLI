@@ -88,7 +88,7 @@ def test_santos_corrected_ef_balances_glv_and_event_f(audit):
     assert by_name["corrected_event_f_descending"].status == "ok"
 
 
-def test_public_api_remains_provisional_and_stops_at_e():
+def test_public_api_is_promoted_only_after_block6m5_certification():
     inputs = SimulationInputs(
         tubingDiameter=0.050673,
         valveDepth=1480.0,
@@ -103,7 +103,7 @@ def test_public_api_remains_provisional_and_stops_at_e():
         projectistName="QA",
     )
     result = simulate(inputs)
-    assert result.validationLevel == "provisional"
-    assert result.terminalEvent == "E_SLUG_BASE_REACHED_SURFACE"
-    assert "E_TO_F decompression is not implemented" in result.physicalScope
-    assert result.points[-1].stage == "D_E"
+    assert result.validationLevel == "certified"
+    assert result.terminalEvent == "F_FILM_VELOCITY_ZERO"
+    assert "A_TO_F certified" in result.physicalScope
+    assert result.points[-1].stage == "E_F"

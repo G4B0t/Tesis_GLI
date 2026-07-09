@@ -19,6 +19,7 @@ from gli.stage_bc_dynamic import simulate_stage_b_to_c
 from gli.stage_bc_common import simulate_stage_b_to_c_common, common_to_stage_bc_result
 from gli.stage_cd_common import simulate_stage_c_to_d_common, common_to_stage_cd_result
 from gli.stage_de_dynamic import simulate_stage_d_to_e
+from gli.stage_ef_dynamic import simulate_stage_e_to_f
 from gli.reference_cases import REFERENCE_CASES,SANTOS_50_70_80
 from gli.reference_gas import injected_gas_target_std_m3, liao_reference_gas_volume_std_m3
 from gli.valves import gas_lift_valve_resultant_force
@@ -188,7 +189,7 @@ def build_validation_rows(
 
 
 def simulate(inputs: SimulationInputs) -> SimulationResult:
-    """Run A->E; B->D common-state certified, D->E provisional."""
+    """Run the corrected A->F chain for the fully specified Santos case."""
 
     if inputs.caseId != SANTOS_50_70_80.case_id:
         raise ValueError("Only the fully specified Santos case can be simulated; Liao Table 5.14 is a partial benchmark")
@@ -204,7 +205,20 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
     if not dynamic_cd_common.certified:
         raise RuntimeError("Certified common C_TO_D segment required")
     dynamic_cd = common_to_stage_cd_result(dynamic_cd_common, params)
-    dynamic_de = simulate_stage_d_to_e(params, stage_c_d=dynamic_cd)
+    dynamic_de = simulate_stage_d_to_e(params, stage_c_d=dynamic_cd, rhs_mode="santos_corrected")
+    dynamic_ef = simulate_stage_e_to_f(params, stage_d_e=dynamic_de, rhs_mode="santos_corrected")
+    chain_certified = (
+        dynamic_bc_common.certified
+        and dynamic_cd_common.certified
+        and dynamic_de.event_e_reached
+        and dynamic_de.gas_balance_relative_error <= 1e-8
+        and dynamic_de.liquid_balance_relative_error <= 1e-8
+        and not bool(dynamic_de.valve_open.any())
+        and dynamic_ef.corrected_certified
+        and dynamic_ef.gas_balance_relative_error <= 1e-8
+        and dynamic_ef.liquid_balance_relative_error <= 1e-8
+        and not bool(dynamic_ef.valve_open.any())
+    )
     points = [
         SimulationPoint(
             t=float(t), pressure=float(p * PA_TO_MPA),
@@ -260,6 +274,21 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
             slugTop=float(h_l),slugBase=float(h_b),slugVelocity=float(v_l),bubbleVelocity=float(v_b),
             filmVolume=float(film),fallbackVolume=float(fb),slugVolume=float(slug),
             liquidRate=float(q),producedVolume=float(vp),gasLiftValveOpen=bool(is_open)))
+    offset_e=offset_d+dynamic_de.event_e_time_s
+    annulus_e=float(dynamic_de.p_c1_pa[-1]*PA_TO_MPA)
+    for t,pt,vg,vf,y,film,fb,prod,mdot,is_open in zip(
+        dynamic_ef.time_s[1:],dynamic_ef.tubing_pressure_pa[1:],
+        dynamic_ef.gas_velocity_m_s[1:],dynamic_ef.film_velocity_m_s[1:],
+        dynamic_ef.film_thickness_m[1:],dynamic_ef.film_volume_m3[1:],
+        dynamic_ef.fallback_volume_m3[1:],dynamic_ef.produced_film_volume_m3[1:],
+        dynamic_ef.surface_gas_rate_kg_s[1:],dynamic_ef.valve_open[1:]):
+        points.append(SimulationPoint(
+            t=float(offset_e+t),pressure=float(pt*PA_TO_MPA),force=0.0,
+            gasRate=float(mdot),stage="E_F",annulusPressure=annulus_e,
+            bubblePressure=float(pt*PA_TO_MPA),filmThickness=float(y),
+            bubbleVelocity=float(vg),slugVelocity=float(vf),filmVolume=float(film),
+            fallbackVolume=float(fb),producedVolume=float(prod),liquidRate=0.0,
+            gasLiftValveOpen=bool(is_open)))
 
     created_at = datetime.now(timezone.utc).isoformat()
     metrics = SimulationMetrics(
@@ -267,7 +296,7 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
             pTo=stage_1["p_to"] * PA_TO_MPA,
             pVo=stage_1["p_vo"] * PA_TO_MPA,
             pBt=stage_1["p_bt"] * PA_TO_MPA,
-            duration=dynamic.opening_time_s+dynamic_bc.event_c_time_s+dynamic_cd.event_d_time_s+dynamic_de.event_e_time_s,
+            duration=dynamic.opening_time_s+dynamic_bc.event_c_time_s+dynamic_cd.event_d_time_s+dynamic_de.event_e_time_s+dynamic_ef.event_f_time_s,
             vgRef=liao_reference_gas_volume_std_m3(params),
             vgiTarget=injected_gas_target_std_m3(params),
         )
@@ -279,16 +308,22 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
         projectistName=inputs.projectistName,
         createdAt=created_at,
         validationRows=[],
-        physicalScope="A_TO_E: D_TO_E uses an explicit surface-discharge boundary; liquid production, slug, film and fallback inventories are conserved. E_TO_F decompression is not implemented.",
-        terminalEvent="E_SLUG_BASE_REACHED_SURFACE",
+        physicalScope=("A_TO_F certified: B_TO_C santos_compatible, C_TO_D santos_corrected, "
+                       "D_TO_E santos_corrected and E_TO_F santos_corrected are connected with "
+                       "identity state transfer, accumulated ledgers and independent gas/liquid balances."
+                       if chain_certified else
+                       "A_TO_F provisional: corrected chain connected, but at least one certification gate remains open."),
+        terminalEvent="F_FILM_VELOCITY_ZERO" if chain_certified else "E_SLUG_BASE_REACHED_SURFACE",
         caseId=inputs.caseId,
         referenceClassification=REFERENCE_CASES[inputs.caseId].classification,
-        validationLevel="provisional",
-        modelLimitations=[
-            "Common B_TO_C uses Santos-compatible C-transition constraints; corrected C_TO_D is certified.",
-            "rho_g, v_g and v_f continuity at D/E is under Block 6M migration.",
-            "E_TO_F remains disconnected until the extended E state is certified.",
-        ],
+        validationLevel="certified" if chain_certified else "provisional",
+        modelLimitations=([
+            "Certified only for caseId santos-gli-50-70-80 and current explicit Santos/Churchill closure set.",
+            "Liao Table 5.14 remains a partial benchmark, not a quantitative validation target for this case.",
+            "E_TO_F entrainment remains represented by the audited Santos no-mass-exchange stage-4 closure in this implementation.",
+        ] if chain_certified else [
+            "Corrected A_TO_F chain is connected but failed at least one certification gate.",
+        ]),
     )
     return result
 
