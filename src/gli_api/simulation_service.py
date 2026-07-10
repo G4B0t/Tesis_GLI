@@ -13,7 +13,17 @@ from gli.parameters import (
     OperatingConditions,
     ValveParameters,
 )
+from gli.design_domain import classify_design_domain
 from gli.simulation import prepare_initial_cycle
+from gli.stage1_dynamic import simulate_stage_1
+from gli.stage_bc_dynamic import simulate_stage_b_to_c
+from gli.stage_bc_common import simulate_stage_b_to_c_common, common_to_stage_bc_result
+from gli.stage_cd_common import simulate_stage_c_to_d_common, common_to_stage_cd_result
+from gli.stage_de_dynamic import simulate_stage_d_to_e
+from gli.stage_ef_dynamic import simulate_stage_e_to_f
+from gli.reference_cases import REFERENCE_CASES,SANTOS_50_70_80
+from gli.reference_gas import injected_gas_target_std_m3, liao_reference_gas_volume_std_m3
+from gli.valves import gas_lift_valve_resultant_force
 
 from .database import save_simulation as persist_simulation
 from .schemas import (
@@ -25,10 +35,10 @@ from .schemas import (
 )
 
 
-DEFAULT_CASING_INNER_DIAMETER_M = 0.1397
-DEFAULT_BELLOWS_AREA_M2 = 0.0005
-DEFAULT_PORT_AREA_M2 = 0.0001
-DEFAULT_VALVE_AREA_RATIO = 0.75
+DEFAULT_CASING_INNER_DIAMETER_M = 0.12573
+DEFAULT_BELLOWS_AREA_M2 = pi * (0.0381**2) / 4.0
+DEFAULT_PORT_AREA_M2 = pi * (0.0127**2) / 4.0
+DEFAULT_VALVE_AREA_RATIO = 0.30
 DEFAULT_RESERVOIR_LIQUID_RATE_M3_S = 2.0e-5
 MPA_TO_PA = 1_000_000.0
 PA_TO_MPA = 1.0 / MPA_TO_PA
@@ -75,6 +85,7 @@ def build_parameters(inputs: SimulationInputs) -> GLIParameters:
             injection_pressure_pa=inputs.injectionPressure * MPA_TO_PA,
             pto_over_pvo=inputs.casingPressureOpenRatio,
             reservoir_liquid_rate_m3_s=reservoir_liquid_rate(inputs),
+            injected_over_reference_gas_volume=inputs.injectedGasReferenceRatio,
         ),
         coefficients=ModelCoefficients(),
     )
@@ -179,12 +190,106 @@ def build_validation_rows(
 
 
 def simulate(inputs: SimulationInputs) -> SimulationResult:
-    """Run the current backend simulation preview without saving it."""
+    """Run the corrected A->F chain for the fully specified Santos case."""
 
+    if inputs.caseId != SANTOS_50_70_80.case_id:
+        raise ValueError("Only the fully specified Santos case can be simulated; Liao Table 5.14 is a partial benchmark")
     params = build_parameters(inputs)
     initial_cycle = prepare_initial_cycle(params)
     stage_1 = initial_cycle["stage_1"]
-    points = build_stage_1_preview_points(inputs, stage_1)
+    dynamic = simulate_stage_1(params)
+    dynamic_bc_common = simulate_stage_b_to_c_common(params, stage_a_b=dynamic, rhs_mode="santos_compatible")
+    if not dynamic_bc_common.certified:
+        raise RuntimeError("Certified common B_TO_C segment required")
+    dynamic_bc = common_to_stage_bc_result(dynamic_bc_common, params)
+    dynamic_cd_common = simulate_stage_c_to_d_common(params, stage_b_c_common=dynamic_bc_common, rhs_mode="santos_corrected")
+    if not dynamic_cd_common.certified:
+        raise RuntimeError("Certified common C_TO_D segment required")
+    dynamic_cd = common_to_stage_cd_result(dynamic_cd_common, params)
+    dynamic_de = simulate_stage_d_to_e(params, stage_c_d=dynamic_cd, rhs_mode="santos_corrected")
+    dynamic_ef = simulate_stage_e_to_f(params, stage_d_e=dynamic_de, rhs_mode="santos_corrected")
+    chain_certified = (
+        dynamic_bc_common.certified
+        and dynamic_cd_common.certified
+        and dynamic_de.event_e_reached
+        and dynamic_de.gas_balance_relative_error <= 1e-8
+        and dynamic_de.liquid_balance_relative_error <= 1e-8
+        and not bool(dynamic_de.valve_open.any())
+        and dynamic_ef.corrected_certified
+        and dynamic_ef.gas_balance_relative_error <= 1e-8
+        and dynamic_ef.liquid_balance_relative_error <= 1e-8
+        and not bool(dynamic_ef.valve_open.any())
+    )
+    points = [
+        SimulationPoint(
+            t=float(t), pressure=float(p * PA_TO_MPA),
+            force=float(force), gasRate=float(rate), stage="A_B",
+            annulusPressure=float(p * PA_TO_MPA),
+        )
+        for t, p, force, rate in zip(
+            dynamic.time_s, dynamic.p_c1_pa,
+            dynamic.resultant_force_n, dynamic.standard_gas_rate_m3_s,
+        )
+    ]
+    for t,p1,p2,pb,rate,h_l,h_b,film in zip(
+        dynamic_bc.time_s[1:],dynamic_bc.p_c1_pa[1:],dynamic_bc.p_c2_pa[1:],
+        dynamic_bc.p_bubble_pa[1:],dynamic_bc.motor_rate_std_m3_s[1:],
+        dynamic_bc.h_l_m[1:],dynamic_bc.h_b_m[1:],dynamic_bc.film_thickness_m[1:]
+    ):
+        force=gas_lift_valve_resultant_force(
+            p2,stage_1["p_bt"],stage_1["p_to"],params.valves.rv,params.valves.bellows_area_m2
+        )
+        points.append(SimulationPoint(
+            t=float(dynamic.opening_time_s+t),pressure=float(p1*PA_TO_MPA),
+            force=float(force),gasRate=float(rate),stage="B_C",
+            annulusPressure=float(p1*PA_TO_MPA),bubblePressure=float(pb*PA_TO_MPA),
+            slugTop=float(h_l),slugBase=float(h_b),filmThickness=float(film),
+        ))
+    offset_c=dynamic.opening_time_s+dynamic_bc.event_c_time_s
+    for t,p1,p2,pt,pwf,h_l,h_b,v_l,v_b,film,film_v,fb,force,is_open in zip(
+        dynamic_cd.time_s[1:],dynamic_cd.p_c1_pa[1:],dynamic_cd.p_c2_pa[1:],
+        dynamic_cd.p_tubing_pa[1:],dynamic_cd.p_bottom_pa[1:],dynamic_cd.h_l_m[1:],
+        dynamic_cd.h_b_m[1:],dynamic_cd.v_l_m_s[1:],dynamic_cd.v_b_m_s[1:],
+        dynamic_cd.film_thickness_m[1:],dynamic_cd.film_volume_m3[1:],dynamic_cd.fallback_volume_m3[1:],
+        dynamic_cd.valve_force_n[1:],dynamic_cd.valve_open[1:]
+    ):
+        points.append(SimulationPoint(
+            t=float(offset_c+t),pressure=float(p1*PA_TO_MPA),force=float(force),
+            gasRate=0.0,stage="C_D",annulusPressure=float(p1*PA_TO_MPA),
+            bubblePressure=float(pt*PA_TO_MPA),bottomPressure=float(pwf*PA_TO_MPA),
+            slugTop=float(h_l),slugBase=float(h_b),filmThickness=float(film),
+            slugVelocity=float(v_l),bubbleVelocity=float(v_b),filmVolume=float(film_v),fallbackVolume=float(fb),
+            gasLiftValveOpen=bool(is_open),
+        ))
+    offset_d=offset_c+dynamic_cd.event_d_time_s
+    for t,p1,pt,pwf,h_l,h_b,v_l,v_b,film,fb,slug,q,vp,force,is_open in zip(
+        dynamic_de.time_s[1:],dynamic_de.p_c1_pa[1:],dynamic_de.p_tubing_pa[1:],
+        dynamic_de.p_bottom_pa[1:],dynamic_de.h_l_m[1:],dynamic_de.h_b_m[1:],
+        dynamic_de.v_l_m_s[1:],dynamic_de.v_b_m_s[1:],dynamic_de.film_volume_m3[1:],
+        dynamic_de.fallback_volume_m3[1:],dynamic_de.slug_volume_m3[1:],
+        dynamic_de.liquid_rate_m3_s[1:],dynamic_de.produced_volume_m3[1:],
+        dynamic_de.valve_force_n[1:],dynamic_de.valve_open[1:]):
+        points.append(SimulationPoint(t=float(offset_d+t),pressure=float(p1*PA_TO_MPA),
+            force=float(force),gasRate=0.0,stage="D_E",annulusPressure=float(p1*PA_TO_MPA),
+            bubblePressure=float(pt*PA_TO_MPA),bottomPressure=float(pwf*PA_TO_MPA),
+            slugTop=float(h_l),slugBase=float(h_b),slugVelocity=float(v_l),bubbleVelocity=float(v_b),
+            filmVolume=float(film),fallbackVolume=float(fb),slugVolume=float(slug),
+            liquidRate=float(q),producedVolume=float(vp),gasLiftValveOpen=bool(is_open)))
+    offset_e=offset_d+dynamic_de.event_e_time_s
+    annulus_e=float(dynamic_de.p_c1_pa[-1]*PA_TO_MPA)
+    for t,pt,vg,vf,y,film,fb,prod,mdot,is_open in zip(
+        dynamic_ef.time_s[1:],dynamic_ef.tubing_pressure_pa[1:],
+        dynamic_ef.gas_velocity_m_s[1:],dynamic_ef.film_velocity_m_s[1:],
+        dynamic_ef.film_thickness_m[1:],dynamic_ef.film_volume_m3[1:],
+        dynamic_ef.fallback_volume_m3[1:],dynamic_ef.produced_film_volume_m3[1:],
+        dynamic_ef.surface_gas_rate_kg_s[1:],dynamic_ef.valve_open[1:]):
+        points.append(SimulationPoint(
+            t=float(offset_e+t),pressure=float(pt*PA_TO_MPA),force=0.0,
+            gasRate=float(mdot),stage="E_F",annulusPressure=annulus_e,
+            bubblePressure=float(pt*PA_TO_MPA),filmThickness=float(y),
+            bubbleVelocity=float(vg),slugVelocity=float(vf),filmVolume=float(film),
+            fallbackVolume=float(fb),producedVolume=float(prod),liquidRate=0.0,
+            gasLiftValveOpen=bool(is_open)))
 
     created_at = datetime.now(timezone.utc).isoformat()
     metrics = SimulationMetrics(
@@ -192,8 +297,47 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
             pTo=stage_1["p_to"] * PA_TO_MPA,
             pVo=stage_1["p_vo"] * PA_TO_MPA,
             pBt=stage_1["p_bt"] * PA_TO_MPA,
-            duration=points[-1].t,
+            duration=dynamic.opening_time_s+dynamic_bc.event_c_time_s+dynamic_cd.event_d_time_s+dynamic_de.event_e_time_s+dynamic_ef.event_f_time_s,
+            vgRef=liao_reference_gas_volume_std_m3(params),
+            vgiTarget=injected_gas_target_std_m3(params),
         )
+
+    domain = classify_design_domain(inputs, chain_certified=chain_certified)
+    if domain.validation_level == "certified":
+        physical_scope = ("A_TO_F certified: B_TO_C santos_compatible, C_TO_D santos_corrected, "
+                          "D_TO_E santos_corrected and E_TO_F santos_corrected are connected with "
+                          "identity state transfer, accumulated ledgers and independent gas/liquid balances.")
+        model_limitations = [
+            "Certified only for the exact Santos frontend/API reference input set.",
+            "Liao Table 5.14 remains a partial benchmark, not a quantitative validation target for this case.",
+            "E_TO_F entrainment remains represented by the audited Santos no-mass-exchange stage-4 closure in this implementation.",
+        ]
+    elif domain.validation_level == "validated_range_candidate":
+        physical_scope = (
+            "A_TO_F validated_range_candidate: corrected chain closed inside the Block 7B "
+            "local design matrix around Santos. This is not yet a commercial certified domain."
+        )
+        model_limitations = [
+            domain.statement,
+            "Requires independent field/literature cases before commercial design certification.",
+            "Use for controlled engineering screening, not final design guarantee.",
+        ]
+    elif domain.validation_level == "out_of_domain":
+        physical_scope = (
+            "A_TO_F out_of_domain: corrected chain may have produced a numerical trajectory, "
+            "but at least one input is outside the Block 7B local matrix."
+        )
+        model_limitations = [
+            domain.statement,
+            f"Outside local matrix fields: {', '.join(domain.outside_fields)}.",
+            "Result must be treated as exploratory until a sensitivity/validation block covers this region.",
+        ]
+    else:
+        physical_scope = "A_TO_F failed: corrected chain connected, but at least one certification gate remains open."
+        model_limitations = [
+            domain.statement,
+            "Do not use this run for design decisions.",
+        ]
 
     result = SimulationResult(
         metrics=metrics,
@@ -201,7 +345,13 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
         projectName=inputs.projectName,
         projectistName=inputs.projectistName,
         createdAt=created_at,
-        validationRows=build_validation_rows(inputs, metrics, points),
+        validationRows=[],
+        physicalScope=physical_scope,
+        terminalEvent="F_FILM_VELOCITY_ZERO" if chain_certified else "E_SLUG_BASE_REACHED_SURFACE",
+        caseId=inputs.caseId,
+        referenceClassification=REFERENCE_CASES[inputs.caseId].classification,
+        validationLevel=domain.validation_level,
+        modelLimitations=model_limitations,
     )
     return result
 
