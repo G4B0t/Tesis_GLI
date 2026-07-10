@@ -4,7 +4,8 @@
 def gas_lift_valve_opened(resultant_force_n: float, tolerance_n: float = 1.0e-6) -> bool:
     """Return True when the gas-lift valve opening condition is reached."""
 
-    return resultant_force_n <= tolerance_n
+    # Santos, p. 119: closed for negative resultant force, open for positive.
+    return resultant_force_n >= -tolerance_n
 
 
 def slug_top_reached_surface(slug_top_height_m: float, valve_depth_m: float) -> bool:

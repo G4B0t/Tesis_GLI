@@ -44,17 +44,21 @@ def motor_valve_gas_rate(
     gas_relative_density: float,
     gas_temperature_k: float,
     cv: float,
+    critical_pressure_ratio: float = 0.5,
 ) -> float:
-    """Gas rate through the surface motor valve.
+    """Standard gas rate through the surface motor valve/choke.
 
-    Santos, eq. 4.1.12. This is kept in the original empirical form.
-    Units depend on the equation constants used by Santos.
+    Santos, eq. 4.1.10: q_gi = 1.5136e-6 Cv P_gi /
+    sqrt(d_g T) * sqrt(r-r^2). Pressures are Pa(a), temperature is K,
+    and the result is standard m3/s. Below the critical ratio, ``r`` is
+    clamped so choked flow does not decrease unphysically.
     """
 
     pressure_ratio = downstream_pressure_pa / upstream_pressure_pa
-    pressure_term = downstream_pressure_pa / upstream_pressure_pa - pressure_ratio**2
-    if pressure_term <= 0:
+    if pressure_ratio >= 1.0:
         return 0.0
+    effective_ratio = max(pressure_ratio, critical_pressure_ratio)
+    pressure_term = effective_ratio - effective_ratio**2
     return (
         1.5136e-6
         * cv

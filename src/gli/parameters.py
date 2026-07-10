@@ -1,7 +1,7 @@
 """Project parameters for the GLI conventional model.
 
-Values are grouped by topic to keep formulas readable. The default values are
-placeholders until we load a real base case from Santos or field data.
+Values are grouped by topic to keep formulas readable. Domain values use SI;
+pressures are absolute unless a name explicitly says otherwise.
 """
 
 from dataclasses import dataclass
@@ -16,6 +16,10 @@ class Geometry:
     annulus_cross_area_m2: float
     valve_depth_m: float
     initial_slug_length_m: float
+    tubing_outer_diameter_m: float | None = None
+    casing_outer_diameter_m: float | None = None
+    perforation_depth_m: float | None = None
+    static_liquid_height_m: float | None = None
 
 
 @dataclass(frozen=True)
@@ -47,6 +51,8 @@ class GasProperties:
     temp_t1_k: float = 320.0
     temp_t3_k: float = 300.0
     temp_ts_k: float = 300.0
+    standard_pressure_pa: float = 101_325.0
+    standard_temperature_k: float = 288.15
 
 
 @dataclass(frozen=True)
@@ -69,6 +75,9 @@ class OperatingConditions:
     injection_pressure_pa: float
     pto_over_pvo: float
     reservoir_liquid_rate_m3_s: float
+    initial_slug_over_static_height: float | None = None
+    injected_over_reference_gas_volume: float | None = None
+    reservoir_static_pressure_pa: float | None = None
 
 
 @dataclass(frozen=True)
