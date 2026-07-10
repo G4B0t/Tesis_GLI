@@ -13,6 +13,7 @@ from gli.parameters import (
     OperatingConditions,
     ValveParameters,
 )
+from gli.design_domain import classify_design_domain
 from gli.simulation import prepare_initial_cycle
 from gli.stage1_dynamic import simulate_stage_1
 from gli.stage_bc_dynamic import simulate_stage_b_to_c
@@ -301,6 +302,43 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
             vgiTarget=injected_gas_target_std_m3(params),
         )
 
+    domain = classify_design_domain(inputs, chain_certified=chain_certified)
+    if domain.validation_level == "certified":
+        physical_scope = ("A_TO_F certified: B_TO_C santos_compatible, C_TO_D santos_corrected, "
+                          "D_TO_E santos_corrected and E_TO_F santos_corrected are connected with "
+                          "identity state transfer, accumulated ledgers and independent gas/liquid balances.")
+        model_limitations = [
+            "Certified only for the exact Santos frontend/API reference input set.",
+            "Liao Table 5.14 remains a partial benchmark, not a quantitative validation target for this case.",
+            "E_TO_F entrainment remains represented by the audited Santos no-mass-exchange stage-4 closure in this implementation.",
+        ]
+    elif domain.validation_level == "validated_range_candidate":
+        physical_scope = (
+            "A_TO_F validated_range_candidate: corrected chain closed inside the Block 7B "
+            "local design matrix around Santos. This is not yet a commercial certified domain."
+        )
+        model_limitations = [
+            domain.statement,
+            "Requires independent field/literature cases before commercial design certification.",
+            "Use for controlled engineering screening, not final design guarantee.",
+        ]
+    elif domain.validation_level == "out_of_domain":
+        physical_scope = (
+            "A_TO_F out_of_domain: corrected chain may have produced a numerical trajectory, "
+            "but at least one input is outside the Block 7B local matrix."
+        )
+        model_limitations = [
+            domain.statement,
+            f"Outside local matrix fields: {', '.join(domain.outside_fields)}.",
+            "Result must be treated as exploratory until a sensitivity/validation block covers this region.",
+        ]
+    else:
+        physical_scope = "A_TO_F failed: corrected chain connected, but at least one certification gate remains open."
+        model_limitations = [
+            domain.statement,
+            "Do not use this run for design decisions.",
+        ]
+
     result = SimulationResult(
         metrics=metrics,
         points=points,
@@ -308,22 +346,12 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
         projectistName=inputs.projectistName,
         createdAt=created_at,
         validationRows=[],
-        physicalScope=("A_TO_F certified: B_TO_C santos_compatible, C_TO_D santos_corrected, "
-                       "D_TO_E santos_corrected and E_TO_F santos_corrected are connected with "
-                       "identity state transfer, accumulated ledgers and independent gas/liquid balances."
-                       if chain_certified else
-                       "A_TO_F provisional: corrected chain connected, but at least one certification gate remains open."),
+        physicalScope=physical_scope,
         terminalEvent="F_FILM_VELOCITY_ZERO" if chain_certified else "E_SLUG_BASE_REACHED_SURFACE",
         caseId=inputs.caseId,
         referenceClassification=REFERENCE_CASES[inputs.caseId].classification,
-        validationLevel="certified" if chain_certified else "provisional",
-        modelLimitations=([
-            "Certified only for caseId santos-gli-50-70-80 and current explicit Santos/Churchill closure set.",
-            "Liao Table 5.14 remains a partial benchmark, not a quantitative validation target for this case.",
-            "E_TO_F entrainment remains represented by the audited Santos no-mass-exchange stage-4 closure in this implementation.",
-        ] if chain_certified else [
-            "Corrected A_TO_F chain is connected but failed at least one certification gate.",
-        ]),
+        validationLevel=domain.validation_level,
+        modelLimitations=model_limitations,
     )
     return result
 

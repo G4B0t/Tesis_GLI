@@ -98,7 +98,13 @@ class SimulationResult(BaseModel):
     terminalEvent: Optional[str] = None
     caseId: str = "santos-gli-50-70-80"
     referenceClassification: str = "full_case"
-    validationLevel: Literal["provisional", "certified"] = "provisional"
+    validationLevel: Literal[
+        "provisional",
+        "certified",
+        "validated_range_candidate",
+        "failed",
+        "out_of_domain",
+    ] = "provisional"
     modelLimitations: List[str] = Field(default_factory=list)
 
 class SimulationSample(BaseModel):
@@ -136,7 +142,13 @@ class SimulationTimeline(BaseModel):
 class PhysicalScopeResponse(BaseModel):
     physicalScope: str
     terminalEvent: str
-    validationLevel: Literal["provisional", "certified"]
+    validationLevel: Literal[
+        "provisional",
+        "certified",
+        "validated_range_candidate",
+        "failed",
+        "out_of_domain",
+    ]
     certifiedStages: List[str]
     eventOrder: List[str]
     modelLimitations: List[str] = Field(default_factory=list)
