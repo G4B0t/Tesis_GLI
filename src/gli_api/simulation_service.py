@@ -27,11 +27,15 @@ from gli.valves import gas_lift_valve_resultant_force
 
 from .database import save_simulation as persist_simulation
 from .schemas import (
+    BalanceError,
+    DiagnosticVariable,
     SimulationInputs,
+    SimulationDiagnostics,
     SimulationMetrics,
     SimulationPoint,
     SimulationResult,
     SimulationValidationRow,
+    StageDuration,
 )
 
 
@@ -44,6 +48,22 @@ MPA_TO_PA = 1_000_000.0
 PA_TO_MPA = 1.0 / MPA_TO_PA
 KGF_CM2_TO_PA = 98_066.5
 SECONDS_PER_DAY = 86_400.0
+
+
+def cumulative_trapezoid(values, times) -> list[float]:
+    """Return cumulative trapezoidal integral for aligned solver arrays."""
+
+    total = 0.0
+    cumulative = [0.0]
+    for index in range(1, len(times)):
+        dt = float(times[index] - times[index - 1])
+        total += 0.5 * float(values[index] + values[index - 1]) * dt
+        cumulative.append(total)
+    return cumulative
+
+
+def max_or_none(values: list[float]) -> float | None:
+    return max(values) if values else None
 
 
 def build_parameters(inputs: SimulationInputs) -> GLIParameters:
@@ -208,6 +228,8 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
     dynamic_cd = common_to_stage_cd_result(dynamic_cd_common, params)
     dynamic_de = simulate_stage_d_to_e(params, stage_c_d=dynamic_cd, rhs_mode="santos_corrected")
     dynamic_ef = simulate_stage_e_to_f(params, stage_d_e=dynamic_de, rhs_mode="santos_corrected")
+    if dynamic_de.film_velocity_m_s is None:
+        raise RuntimeError("Certified D_TO_E segment must expose film velocity memory")
     chain_certified = (
         dynamic_bc_common.certified
         and dynamic_cd_common.certified
@@ -220,20 +242,29 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
         and dynamic_ef.liquid_balance_relative_error <= 1e-8
         and not bool(dynamic_ef.valve_open.any())
     )
+    dynamic_gas_injected = cumulative_trapezoid(
+        dynamic.standard_gas_rate_m3_s,
+        dynamic.time_s,
+    )
     points = [
         SimulationPoint(
             t=float(t), pressure=float(p * PA_TO_MPA),
             force=float(force), gasRate=float(rate), stage="A_B",
             annulusPressure=float(p * PA_TO_MPA),
+            gasInjectedVolume=float(gas_volume),
+            motorValveRate=float(rate),
+            glvMassRate=0.0,
         )
-        for t, p, force, rate in zip(
+        for t, p, force, rate, gas_volume in zip(
             dynamic.time_s, dynamic.p_c1_pa,
             dynamic.resultant_force_n, dynamic.standard_gas_rate_m3_s,
+            dynamic_gas_injected,
         )
     ]
-    for t,p1,p2,pb,rate,h_l,h_b,film in zip(
+    for t,p1,p2,pb,rate,mgl,vgi,h_l,h_b,film in zip(
         dynamic_bc.time_s[1:],dynamic_bc.p_c1_pa[1:],dynamic_bc.p_c2_pa[1:],
         dynamic_bc.p_bubble_pa[1:],dynamic_bc.motor_rate_std_m3_s[1:],
+        dynamic_bc.gl_mass_rate_kg_s[1:],dynamic_bc.injected_volume_std_m3[1:],
         dynamic_bc.h_l_m[1:],dynamic_bc.h_b_m[1:],dynamic_bc.film_thickness_m[1:]
     ):
         force=gas_lift_valve_resultant_force(
@@ -244,14 +275,16 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
             force=float(force),gasRate=float(rate),stage="B_C",
             annulusPressure=float(p1*PA_TO_MPA),bubblePressure=float(pb*PA_TO_MPA),
             slugTop=float(h_l),slugBase=float(h_b),filmThickness=float(film),
+            gasInjectedVolume=float(vgi),motorValveRate=float(rate),glvMassRate=float(mgl),
         ))
     offset_c=dynamic.opening_time_s+dynamic_bc.event_c_time_s
-    for t,p1,p2,pt,pwf,h_l,h_b,v_l,v_b,film,film_v,fb,force,is_open in zip(
+    final_gas_injected = float(dynamic_bc.injected_volume_std_m3[-1])
+    for t,p1,p2,pt,pwf,h_l,h_b,v_l,v_b,film,film_v,fb,mgl,force,is_open in zip(
         dynamic_cd.time_s[1:],dynamic_cd.p_c1_pa[1:],dynamic_cd.p_c2_pa[1:],
         dynamic_cd.p_tubing_pa[1:],dynamic_cd.p_bottom_pa[1:],dynamic_cd.h_l_m[1:],
         dynamic_cd.h_b_m[1:],dynamic_cd.v_l_m_s[1:],dynamic_cd.v_b_m_s[1:],
         dynamic_cd.film_thickness_m[1:],dynamic_cd.film_volume_m3[1:],dynamic_cd.fallback_volume_m3[1:],
-        dynamic_cd.valve_force_n[1:],dynamic_cd.valve_open[1:]
+        dynamic_cd.gl_mass_rate_kg_s[1:],dynamic_cd.valve_force_n[1:],dynamic_cd.valve_open[1:]
     ):
         points.append(SimulationPoint(
             t=float(offset_c+t),pressure=float(p1*PA_TO_MPA),force=float(force),
@@ -259,22 +292,27 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
             bubblePressure=float(pt*PA_TO_MPA),bottomPressure=float(pwf*PA_TO_MPA),
             slugTop=float(h_l),slugBase=float(h_b),filmThickness=float(film),
             slugVelocity=float(v_l),bubbleVelocity=float(v_b),filmVolume=float(film_v),fallbackVolume=float(fb),
-            gasLiftValveOpen=bool(is_open),
+            gasLiftValveOpen=bool(is_open),gasInjectedVolume=final_gas_injected,
+            motorValveRate=0.0,glvMassRate=float(mgl),
         ))
     offset_d=offset_c+dynamic_cd.event_d_time_s
-    for t,p1,pt,pwf,h_l,h_b,v_l,v_b,film,fb,slug,q,vp,force,is_open in zip(
+    for t,p1,pt,pwf,h_l,h_b,v_l,v_b,vf,film,fb,slug,q,vp,mgl,force,is_open in zip(
         dynamic_de.time_s[1:],dynamic_de.p_c1_pa[1:],dynamic_de.p_tubing_pa[1:],
         dynamic_de.p_bottom_pa[1:],dynamic_de.h_l_m[1:],dynamic_de.h_b_m[1:],
-        dynamic_de.v_l_m_s[1:],dynamic_de.v_b_m_s[1:],dynamic_de.film_volume_m3[1:],
+        dynamic_de.v_l_m_s[1:],dynamic_de.v_b_m_s[1:],dynamic_de.film_velocity_m_s[1:],
+        dynamic_de.film_volume_m3[1:],
         dynamic_de.fallback_volume_m3[1:],dynamic_de.slug_volume_m3[1:],
         dynamic_de.liquid_rate_m3_s[1:],dynamic_de.produced_volume_m3[1:],
+        dynamic_de.gl_mass_rate_kg_s[1:],
         dynamic_de.valve_force_n[1:],dynamic_de.valve_open[1:]):
         points.append(SimulationPoint(t=float(offset_d+t),pressure=float(p1*PA_TO_MPA),
             force=float(force),gasRate=0.0,stage="D_E",annulusPressure=float(p1*PA_TO_MPA),
             bubblePressure=float(pt*PA_TO_MPA),bottomPressure=float(pwf*PA_TO_MPA),
             slugTop=float(h_l),slugBase=float(h_b),slugVelocity=float(v_l),bubbleVelocity=float(v_b),
             filmVolume=float(film),fallbackVolume=float(fb),slugVolume=float(slug),
-            liquidRate=float(q),producedVolume=float(vp),gasLiftValveOpen=bool(is_open)))
+            liquidRate=float(q),producedVolume=float(vp),gasLiftValveOpen=bool(is_open),
+            gasInjectedVolume=final_gas_injected,filmVelocity=float(vf),
+            motorValveRate=0.0,glvMassRate=float(mgl)))
     offset_e=offset_d+dynamic_de.event_e_time_s
     annulus_e=float(dynamic_de.p_c1_pa[-1]*PA_TO_MPA)
     for t,pt,vg,vf,y,film,fb,prod,mdot,is_open in zip(
@@ -287,9 +325,10 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
             t=float(offset_e+t),pressure=float(pt*PA_TO_MPA),force=0.0,
             gasRate=float(mdot),stage="E_F",annulusPressure=annulus_e,
             bubblePressure=float(pt*PA_TO_MPA),filmThickness=float(y),
-            bubbleVelocity=float(vg),slugVelocity=float(vf),filmVolume=float(film),
+            bubbleVelocity=float(vg),slugVelocity=float(vf),filmVelocity=float(vf),filmVolume=float(film),
             fallbackVolume=float(fb),producedVolume=float(prod),liquidRate=0.0,
-            gasLiftValveOpen=bool(is_open)))
+            gasLiftValveOpen=bool(is_open),gasInjectedVolume=final_gas_injected,
+            motorValveRate=0.0,glvMassRate=0.0))
 
     created_at = datetime.now(timezone.utc).isoformat()
     metrics = SimulationMetrics(
@@ -301,6 +340,104 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
             vgRef=liao_reference_gas_volume_std_m3(params),
             vgiTarget=injected_gas_target_std_m3(params),
         )
+    duration = metrics.duration
+    stage_durations = [
+        StageDuration(stage="A_B", startTime=0.0, endTime=float(dynamic.opening_time_s),
+                      duration=float(dynamic.opening_time_s)),
+        StageDuration(stage="B_C", startTime=float(dynamic.opening_time_s), endTime=float(offset_c),
+                      duration=float(dynamic_bc.event_c_time_s)),
+        StageDuration(stage="C_D", startTime=float(offset_c), endTime=float(offset_d),
+                      duration=float(dynamic_cd.event_d_time_s)),
+        StageDuration(stage="D_E", startTime=float(offset_d), endTime=float(offset_e),
+                      duration=float(dynamic_de.event_e_time_s)),
+        StageDuration(stage="E_F", startTime=float(offset_e), endTime=float(duration),
+                      duration=float(dynamic_ef.event_f_time_s)),
+    ]
+    balance_errors = [
+        BalanceError(
+            stage="A_B",
+            gasRelativeError=float(dynamic.mass_balance_relative_error),
+            source="Stage1Result.mass_balance_relative_error",
+        ),
+        BalanceError(
+            stage="B_C",
+            gasRelativeError=float(dynamic_bc.gas_balance_relative_error),
+            liquidRelativeError=float(dynamic_bc.liquid_balance_relative_error),
+            source="StageBCResult gas/liquid balance closures",
+        ),
+        BalanceError(
+            stage="C_D",
+            gasRelativeError=float(dynamic_cd.gas_balance_relative_error),
+            liquidRelativeError=float(dynamic_cd.liquid_balance_relative_error),
+            source="StageCDResult gas/liquid balance closures",
+        ),
+        BalanceError(
+            stage="D_E",
+            gasRelativeError=float(dynamic_de.gas_balance_relative_error),
+            liquidRelativeError=float(dynamic_de.liquid_balance_relative_error),
+            source="StageDEResult gas/liquid balance closures",
+        ),
+        BalanceError(
+            stage="E_F",
+            gasRelativeError=float(dynamic_ef.gas_balance_relative_error),
+            liquidRelativeError=float(dynamic_ef.liquid_balance_relative_error),
+            source="StageEFResult gas/liquid balance closures",
+        ),
+    ]
+    diagnostic_variables = [
+        DiagnosticVariable(
+            name="gasInjectedVolume",
+            unit="std m3",
+            source="A_B trapezoidal integral of motor valve standard gas rate; B_C injected_volume_std_m3 state",
+            formula="integral(q_motor_std dt)",
+            stage="A_B/B_C",
+            certification="Derived from the certified gas injection state; no solver equation was changed.",
+        ),
+        DiagnosticVariable(
+            name="filmVelocity",
+            unit="m/s",
+            source="StageDEResult.film_velocity_m_s and StageEFResult.film_velocity_m_s",
+            formula="Santos corrected film momentum/memory state",
+            stage="D_E/E_F",
+            certification="Exposed from corrected Santos stages already used by the A->F certified chain.",
+        ),
+        DiagnosticVariable(
+            name="motorValveRate",
+            unit="std m3/s",
+            source="Stage1Result.standard_gas_rate_m3_s and StageBCResult.motor_rate_std_m3_s",
+            formula="surface motor-valve gas-rate correlation",
+            stage="A_B/B_C",
+            certification="Same rate used by the mass balance of the existing solver.",
+        ),
+        DiagnosticVariable(
+            name="glvMassRate",
+            unit="kg/s",
+            source="StageBCResult/StageCDResult/StageDEResult.gl_mass_rate_kg_s",
+            formula="compressible gas-lift-valve orifice proxy",
+            stage="B_C/C_D/D_E",
+            certification="Same transfer term used in the stage gas inventories.",
+        ),
+        DiagnosticVariable(
+            name="stageDurations",
+            unit="s",
+            source="event times from Stage1Result and StageBC/CD/DE/EF results",
+            formula="event_end_time - event_start_time",
+            stage="A_F",
+            certification="Durations are direct event times from the certified solver chain.",
+        ),
+    ]
+    film_velocities = [abs(point.filmVelocity) for point in points if point.filmVelocity is not None]
+    motor_rates = [point.motorValveRate for point in points if point.motorValveRate is not None]
+    glv_rates = [point.glvMassRate for point in points if point.glvMassRate is not None]
+    diagnostics = SimulationDiagnostics(
+        stageDurations=stage_durations,
+        balanceErrors=balance_errors,
+        variables=diagnostic_variables,
+        gasInjectedVolume=final_gas_injected,
+        maxFilmVelocity=max_or_none(film_velocities),
+        maxMotorValveRate=max_or_none(motor_rates),
+        maxGlvMassRate=max_or_none(glv_rates),
+    )
 
     domain = classify_design_domain(inputs, chain_certified=chain_certified)
     if domain.validation_level == "certified":
@@ -350,6 +487,7 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
         terminalEvent="F_FILM_VELOCITY_ZERO" if chain_certified else "E_SLUG_BASE_REACHED_SURFACE",
         caseId=inputs.caseId,
         referenceClassification=REFERENCE_CASES[inputs.caseId].classification,
+        diagnostics=diagnostics,
         validationLevel=domain.validation_level,
         modelLimitations=model_limitations,
     )

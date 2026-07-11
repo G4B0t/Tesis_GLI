@@ -73,6 +73,51 @@ class SimulationPoint(BaseModel):
     producedVolume: Optional[float] = None
     slugVolume: Optional[float] = None
     filmVolume: Optional[float] = None
+    gasInjectedVolume: Optional[float] = None
+    filmVelocity: Optional[float] = None
+    motorValveRate: Optional[float] = None
+    glvMassRate: Optional[float] = None
+
+
+class StageDuration(BaseModel):
+    """Elapsed time for one certified model stage."""
+
+    stage: str
+    startTime: float
+    endTime: float
+    duration: float
+
+
+class BalanceError(BaseModel):
+    """Independent gas/liquid balance closure reported by a stage solver."""
+
+    stage: str
+    gasRelativeError: Optional[float] = None
+    liquidRelativeError: Optional[float] = None
+    source: str
+
+
+class DiagnosticVariable(BaseModel):
+    """Traceability metadata for a variable exposed by diagnostics."""
+
+    name: str
+    unit: str
+    source: str
+    formula: str
+    stage: str
+    certification: str
+
+
+class SimulationDiagnostics(BaseModel):
+    """Certified diagnostics derived from the A->F solver outputs."""
+
+    stageDurations: List[StageDuration] = Field(default_factory=list)
+    balanceErrors: List[BalanceError] = Field(default_factory=list)
+    variables: List[DiagnosticVariable] = Field(default_factory=list)
+    gasInjectedVolume: Optional[float] = None
+    maxFilmVelocity: Optional[float] = None
+    maxMotorValveRate: Optional[float] = None
+    maxGlvMassRate: Optional[float] = None
 
 
 class SimulationValidationRow(BaseModel):
@@ -98,6 +143,7 @@ class SimulationResult(BaseModel):
     terminalEvent: Optional[str] = None
     caseId: str = "santos-gli-50-70-80"
     referenceClassification: str = "full_case"
+    diagnostics: Optional[SimulationDiagnostics] = None
     validationLevel: Literal[
         "provisional",
         "certified",

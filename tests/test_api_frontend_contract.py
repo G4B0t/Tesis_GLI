@@ -72,6 +72,21 @@ def test_api_simulation_response_is_certified_a_to_f(monkeypatch, tmp_path):
     assert result.points[-1].stage == "E_F"
     assert abs(result.points[-1].slugVelocity) < 1e-6
     assert result.metrics.duration == result.points[-1].t
+    assert result.diagnostics is not None
+    assert abs(sum(stage.duration for stage in result.diagnostics.stageDurations) - result.metrics.duration) < 1e-9
+    assert [stage.stage for stage in result.diagnostics.stageDurations] == ["A_B", "B_C", "C_D", "D_E", "E_F"]
+    assert result.diagnostics.gasInjectedVolume == result.points[-1].gasInjectedVolume
+    assert result.diagnostics.maxMotorValveRate > 0.0
+    assert result.diagnostics.maxFilmVelocity > 0.0
+    assert result.diagnostics.maxGlvMassRate >= 0.0
+    assert all(balance.gasRelativeError is not None for balance in result.diagnostics.balanceErrors)
+    assert {variable.name for variable in result.diagnostics.variables} >= {
+        "gasInjectedVolume",
+        "filmVelocity",
+        "motorValveRate",
+        "glvMassRate",
+        "stageDurations",
+    }
 
 
 def test_saved_simulation_and_timeline_contract(monkeypatch, tmp_path):
