@@ -11,8 +11,9 @@ from gli_api.main import (
     reference_cases,
     saved_simulation,
     saved_simulation_timeline,
+    scenario_comparison,
 )
-from gli_api.schemas import SimulationInputs
+from gli_api.schemas import ScenarioCase, ScenarioComparisonRequest, SimulationInputs
 
 
 def santos_input() -> SimulationInputs:
@@ -37,6 +38,7 @@ def test_required_api_routes_are_registered():
     assert ("GET", "/api/physical-scope") in routes
     assert ("GET", "/api/reference-cases") in routes
     assert ("POST", "/api/simulations") in routes
+    assert ("POST", "/api/scenarios") in routes
     assert ("GET", "/api/simulations/{simulation_id}") in routes
     assert ("GET", "/api/simulations/{simulation_id}/timeline") in routes
 
@@ -87,6 +89,33 @@ def test_api_simulation_response_is_certified_a_to_f(monkeypatch, tmp_path):
         "glvMassRate",
         "stageDurations",
     }
+    engineering = {metric.name: metric for metric in result.diagnostics.engineeringMetrics}
+    assert engineering["cyclesPerDay"].value == 86400 / result.metrics.duration
+    assert engineering["producedLiquidPerCycle"].value == result.points[-1].producedVolume
+    assert engineering["injectedGasPerCycle"].value == result.diagnostics.gasInjectedVolume
+    assert engineering["estimatedDailyLiquid"].formula
+    assert engineering["gasLiquidRatio"].unit == "std m3/m3"
+    assert all(metric.certification for metric in engineering.values())
+
+
+def test_scenario_comparison_contract():
+    base = santos_input()
+    comparison = scenario_comparison(
+        ScenarioComparisonRequest(
+            scenarios=[
+                ScenarioCase(name="Base", inputs=base),
+                ScenarioCase(
+                    name="Injection +5%",
+                    inputs=base.model_copy(update={"injectionPressure": base.injectionPressure * 1.05}),
+                ),
+            ]
+        )
+    )
+
+    assert len(comparison.scenarios) == 2
+    assert comparison.scenarios[0].summary.name == "Base"
+    assert comparison.scenarios[0].summary.estimatedDailyLiquid is not None
+    assert comparison.scenarios[1].summary.deltaDailyLiquidPercent is not None
 
 
 def test_saved_simulation_and_timeline_contract(monkeypatch, tmp_path):

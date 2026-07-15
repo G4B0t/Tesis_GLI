@@ -8,12 +8,15 @@ from gli.reference_cases import REFERENCE_CASES
 from .schemas import (
     SimulationInputs,
     SimulationResult,
+    ScenarioComparisonRequest,
+    ScenarioComparisonResponse,
     SimulationSummary,
     StoredSimulation,
     ValidationReference,
     EventRecord, SimulationSample, SimulationTimeline,
     PhysicalScopeResponse, ReferenceCaseResponse,
 )
+from .scenario_service import compare_scenarios
 from .simulation_service import save_simulation_run, simulate
 from .validation_reference import get_gli_conventional_reference
 from .timeline_service import build_timeline
@@ -125,6 +128,14 @@ def simulation_events(inputs: SimulationInputs) -> list[EventRecord]:
 @app.post("/api/series", response_model=list[SimulationSample])
 def simulation_series(inputs: SimulationInputs, interval_s: float = 1.0) -> list[SimulationSample]:
     return build_timeline(simulate(inputs), interval_s).resampledSeries
+
+
+@app.post("/scenarios", response_model=ScenarioComparisonResponse)
+@app.post("/api/scenarios", response_model=ScenarioComparisonResponse)
+def scenario_comparison(request: ScenarioComparisonRequest) -> ScenarioComparisonResponse:
+    """Run a manual set of scenarios using the certified solver as engine."""
+
+    return compare_scenarios(request)
 
 
 @app.post("/simulations", response_model=SimulationResult)

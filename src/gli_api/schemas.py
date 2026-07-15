@@ -108,12 +108,27 @@ class DiagnosticVariable(BaseModel):
     certification: str
 
 
+class EngineeringMetric(BaseModel):
+    """Operational indicator derived from certified simulation outputs."""
+
+    name: str
+    label: str
+    value: Optional[float] = None
+    unit: str
+    formula: str
+    assumption: str
+    source: str
+    use: str
+    certification: str
+
+
 class SimulationDiagnostics(BaseModel):
     """Certified diagnostics derived from the A->F solver outputs."""
 
     stageDurations: List[StageDuration] = Field(default_factory=list)
     balanceErrors: List[BalanceError] = Field(default_factory=list)
     variables: List[DiagnosticVariable] = Field(default_factory=list)
+    engineeringMetrics: List[EngineeringMetric] = Field(default_factory=list)
     gasInjectedVolume: Optional[float] = None
     maxFilmVelocity: Optional[float] = None
     maxMotorValveRate: Optional[float] = None
@@ -152,6 +167,61 @@ class SimulationResult(BaseModel):
         "out_of_domain",
     ] = "provisional"
     modelLimitations: List[str] = Field(default_factory=list)
+
+
+class ScenarioCase(BaseModel):
+    """One simulation case inside a scenario comparison request."""
+
+    name: str = Field(min_length=1, max_length=80)
+    description: str = Field(default="", max_length=240)
+    inputs: SimulationInputs
+
+
+class ScenarioSummary(BaseModel):
+    """Compact engineering result used to compare scenarios."""
+
+    name: str
+    description: str = ""
+    validationLevel: Literal[
+        "provisional",
+        "certified",
+        "validated_range_candidate",
+        "failed",
+        "out_of_domain",
+    ]
+    terminalEvent: Optional[str] = None
+    duration: Optional[float] = None
+    producedLiquidPerCycle: Optional[float] = None
+    estimatedDailyLiquid: Optional[float] = None
+    injectedGasPerCycle: Optional[float] = None
+    gasLiquidRatio: Optional[float] = None
+    fallbackRatio: Optional[float] = None
+    slugRecovery: Optional[float] = None
+    cyclesPerDay: Optional[float] = None
+    deltaDailyLiquidPercent: Optional[float] = None
+    warnings: List[str] = Field(default_factory=list)
+
+
+class ScenarioResult(BaseModel):
+    """Full scenario response item."""
+
+    summary: ScenarioSummary
+    result: Optional[SimulationResult] = None
+    error: Optional[str] = None
+
+
+class ScenarioComparisonRequest(BaseModel):
+    """Request for a manual scenario comparison."""
+
+    baseName: str = "Caso base"
+    scenarios: List[ScenarioCase] = Field(min_length=1, max_length=8)
+
+
+class ScenarioComparisonResponse(BaseModel):
+    """Manual scenario comparison produced by reusing the certified solver."""
+
+    baseName: str
+    scenarios: List[ScenarioResult]
 
 class SimulationSample(BaseModel):
     t: float

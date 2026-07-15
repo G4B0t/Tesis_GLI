@@ -29,6 +29,7 @@ from .database import save_simulation as persist_simulation
 from .schemas import (
     BalanceError,
     DiagnosticVariable,
+    EngineeringMetric,
     SimulationInputs,
     SimulationDiagnostics,
     SimulationMetrics,
@@ -64,6 +65,10 @@ def cumulative_trapezoid(values, times) -> list[float]:
 
 def max_or_none(values: list[float]) -> float | None:
     return max(values) if values else None
+
+
+def safe_divide(numerator: float, denominator: float) -> float | None:
+    return numerator / denominator if abs(denominator) > 1.0e-12 else None
 
 
 def build_parameters(inputs: SimulationInputs) -> GLIParameters:
@@ -429,10 +434,109 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
     film_velocities = [abs(point.filmVelocity) for point in points if point.filmVelocity is not None]
     motor_rates = [point.motorValveRate for point in points if point.motorValveRate is not None]
     glv_rates = [point.glvMassRate for point in points if point.glvMassRate is not None]
+    final_point = points[-1]
+    produced_liquid_per_cycle = float(final_point.producedVolume or 0.0)
+    fallback_volume = float(final_point.fallbackVolume or 0.0)
+    initial_slug_volume = pi * inputs.tubingDiameter**2 / 4.0 * inputs.slugLength
+    cycles_per_day = safe_divide(SECONDS_PER_DAY, duration) or 0.0
+    estimated_daily_liquid = produced_liquid_per_cycle * cycles_per_day
+    estimated_daily_injected_gas = final_gas_injected * cycles_per_day
+    fallback_denominator = produced_liquid_per_cycle + fallback_volume
+    engineering_metrics = [
+        EngineeringMetric(
+            name="producedLiquidPerCycle",
+            label="Liquido producido por ciclo",
+            value=produced_liquid_per_cycle,
+            unit="m3/ciclo",
+            formula="V_producido_final",
+            assumption="Volumen producido acumulado al evento terminal F.",
+            source="SimulationPoint.producedVolume en el ultimo punto E_F",
+            use="Cuantificar aporte de liquido de una corrida completa.",
+            certification="Derivado de ledger de produccion del solver A-F; no modifica ecuaciones.",
+        ),
+        EngineeringMetric(
+            name="cyclesPerDay",
+            label="Ciclos por dia estimados",
+            value=cycles_per_day,
+            unit="ciclos/d",
+            formula="86400 / duracion_ciclo",
+            assumption="Operacion repetitiva estable con el mismo ciclo simulado.",
+            source="SimulationMetrics.duration",
+            use="Estimar frecuencia operativa diaria.",
+            certification="Derivado de tiempo de ciclo certificado por eventos B-C-D-E-F.",
+        ),
+        EngineeringMetric(
+            name="estimatedDailyLiquid",
+            label="Produccion diaria estimada",
+            value=estimated_daily_liquid,
+            unit="m3/d",
+            formula="V_producido_por_ciclo * ciclos_por_dia",
+            assumption="El ciclo simulado se repite sin variacion de reservorio ni condiciones de superficie.",
+            source="producedLiquidPerCycle y cyclesPerDay",
+            use="Indicador de produccion para comparacion de escenarios.",
+            certification="Metrica derivada; no representa garantia de campo sin validacion operacional.",
+        ),
+        EngineeringMetric(
+            name="injectedGasPerCycle",
+            label="Gas inyectado por ciclo",
+            value=final_gas_injected,
+            unit="std m3/ciclo",
+            formula="V_gas_inyectado_final",
+            assumption="Gas acumulado medido en condicion estandar del modelo.",
+            source="SimulationDiagnostics.gasInjectedVolume",
+            use="Medir consumo de gas por ciclo GLI.",
+            certification="Derivado de la integral certificada de caudal de valvula motor.",
+        ),
+        EngineeringMetric(
+            name="estimatedDailyInjectedGas",
+            label="Gas diario estimado",
+            value=estimated_daily_injected_gas,
+            unit="std m3/d",
+            formula="gas_inyectado_por_ciclo * ciclos_por_dia",
+            assumption="El ciclo simulado se repite durante 24 horas.",
+            source="injectedGasPerCycle y cyclesPerDay",
+            use="Comparar demanda diaria de gas de inyeccion.",
+            certification="Metrica operacional derivada de outputs certificados.",
+        ),
+        EngineeringMetric(
+            name="gasLiquidRatio",
+            label="Relacion gas-liquido inyectado",
+            value=safe_divide(final_gas_injected, produced_liquid_per_cycle),
+            unit="std m3/m3",
+            formula="gas_inyectado_por_ciclo / liquido_producido_por_ciclo",
+            assumption="Usa gas inyectado, no gas producido de formacion.",
+            source="gasInjectedVolume y producedVolume final",
+            use="Indicador de eficiencia de uso de gas.",
+            certification="Metrica derivada; debe interpretarse dentro del dominio validado.",
+        ),
+        EngineeringMetric(
+            name="fallbackRatio",
+            label="Fraccion fallback",
+            value=safe_divide(fallback_volume, fallback_denominator),
+            unit="fraccion",
+            formula="fallback_final / (fallback_final + producido_final)",
+            assumption="Compara liquido no producido contra liquido movilizado observado.",
+            source="fallbackVolume y producedVolume final",
+            use="Detectar perdida de eficiencia por retorno de pelicula/liquido.",
+            certification="Metrica derivada de ledgers de liquido del solver.",
+        ),
+        EngineeringMetric(
+            name="slugRecovery",
+            label="Recuperacion de slug inicial",
+            value=safe_divide(produced_liquid_per_cycle, initial_slug_volume),
+            unit="fraccion",
+            formula="V_producido_final / (area_tubing * longitud_slug_inicial)",
+            assumption="Referencia contra volumen geometrico inicial de slug.",
+            source="SimulationInputs.tubingDiameter, slugLength y producedVolume final",
+            use="Evaluar que fraccion del slug inicial se transforma en liquido producido.",
+            certification="Metrica derivada geometrica; no agrega fisica nueva.",
+        ),
+    ]
     diagnostics = SimulationDiagnostics(
         stageDurations=stage_durations,
         balanceErrors=balance_errors,
         variables=diagnostic_variables,
+        engineeringMetrics=engineering_metrics,
         gasInjectedVolume=final_gas_injected,
         maxFilmVelocity=max_or_none(film_velocities),
         maxMotorValveRate=max_or_none(motor_rates),

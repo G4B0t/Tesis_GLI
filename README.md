@@ -66,7 +66,7 @@ database/migrations/001_create_initial_schema.sql
 ## Ejecutar API local
 
 ```powershell
-D:\UPB\Tesis_GLI\.venv\Scripts\Activate.ps1
+conda activate gli311
 uvicorn gli_api.main:app --app-dir src --reload --host 127.0.0.1 --port 8008
 ```
 
