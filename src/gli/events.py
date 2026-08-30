@@ -2,6 +2,7 @@
 
 
 EVENT_G_GAS_PRESSURE_BACK_TO_INITIAL = "G_GAS_PRESSURE_BACK_TO_INITIAL"
+EVENT_G_MOMENTUM_EQUILIBRIUM = "G_MOMENTUM_EQUILIBRIUM"
 
 
 def gas_lift_valve_opened(resultant_force_n: float, tolerance_n: float = 1.0e-6) -> bool:
@@ -52,3 +53,19 @@ def gas_pressure_back_to_initial_residual(
     """
 
     return current_pressure_pa - initial_pressure_pa
+
+
+def stage_g_momentum_residual(
+    pressure_at_liquid_top_pa: float,
+    surface_tubing_pressure_pa: float,
+    mean_gas_density_kg_m3: float,
+    gas_column_length_m: float,
+    gravity_m_s2: float,
+) -> float:
+    """Zero-velocity residual implied by Santos 4.1.98-4.1.102."""
+
+    return (
+        float(pressure_at_liquid_top_pa)
+        - float(surface_tubing_pressure_pa)
+        - float(mean_gas_density_kg_m3) * float(gravity_m_s2) * float(gas_column_length_m)
+    )

@@ -167,10 +167,27 @@ def audit_sensitivity_scenario(
 ) -> SensitivityResult:
     base = base_inputs or santos_frontend_inputs()
     tested = _apply_scenario(base, scenario)
-    audit = run_block6m5_audit(build_parameters(tested), max_step_s=max_step_s)
     base_value = float(base.model_dump()[scenario.field])
     tested_value = float(tested.model_dump()[scenario.field])
     relative_change = 100.0 * (tested_value - base_value) / max(abs(base_value), 1e-18)
+    try:
+        audit = run_block6m5_audit(build_parameters(tested), max_step_s=max_step_s)
+    except ValueError as exc:
+        return SensitivityResult(
+            scenario_id=scenario.scenario_id,
+            field=scenario.field,
+            label=scenario.label,
+            base_value=base_value,
+            tested_value=tested_value,
+            relative_change_percent=relative_change,
+            status="failed",
+            validation_level_candidate="out_of_domain",
+            terminal_event="INPUT_DOMAIN_ERROR",
+            event_times_s={},
+            max_residual_normalized=float("inf"),
+            failed_contracts=("input_geometry_domain",),
+            interpretation=f"Entrada fuera del dominio geométrico/IPR: {exc}",
+        )
     status: SensitivityStatus = "local_stability_observed" if audit.certified else "failed"
     interpretation = (
         "Los contratos A->F cierran para esta perturbación local; esto evidencia estabilidad "

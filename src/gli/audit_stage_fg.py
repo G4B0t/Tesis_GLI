@@ -72,6 +72,8 @@ def run_stage_fg_audit(params=None, *, af_max_step_s: float = 0.5, fg_max_step_s
         failed.append("liquid_balance")
     if float(fg.film_returned_volume_m3[-1]) <= 0.0:
         failed.append("film_did_not_return")
+    if not fg.reservoir_inflow_valid:
+        failed.append("reservoir_ipr_invalid_reverse_flow")
     if abs(float(fg.produced_liquid_volume_m3[-1] - fg.produced_liquid_volume_m3[0])) > 1.0e-12:
         failed.append("surface_liquid_production_during_fg")
     return StageFGAudit(

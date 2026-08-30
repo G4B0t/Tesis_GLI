@@ -5,6 +5,8 @@ from gli.stage1_dynamic import simulate_stage_1
 from gli.stage_bc_common import simulate_stage_b_to_c_common,I_HB,I_HL,I_VG,I_VL,I_VF,I_Y
 from gli.stage_cd_common import _cd_terms_santos,simulate_stage_c_to_d_common
 from gli.geometry import tubing_area
+from gli.initial_conditions import initial_stage_1
+from gli.reservoir import reservoir_inflow_from_pt1
 
 @pytest.fixture(scope='module')
 def chain():
@@ -15,10 +17,11 @@ def test_corrected_rhs_separates_kinematics_and_reservoir_feed(chain):
 
 def test_santos_film_mass_equation_4135_closes_instantaneously(chain):
  p,_,b,_,_=chain;s=b.final_state;d=_cd_terms_santos(s,p,True)[0];r=p.geometry.tubing_diameter_m/2;At=tubing_area(2*r);Ab=np.pi*(r-s[I_Y])**2;Af=At-Ab
- residual=2*np.pi*(r-s[I_Y])*s[I_HB]*d[I_Y]+Af*s[I_VF]-p.operating.reservoir_liquid_rate_m3_s;assert abs(residual)<1e-12
+ qres=reservoir_inflow_from_pt1(p,float(s[3]),initial_stage_1(p)['rho_l']).rate_m3_s
+ residual=2*np.pi*(r-s[I_Y])*s[I_HB]*d[I_Y]+Af*s[I_VF]-qres;assert abs(residual)<1e-12
 
-def test_candidate_improves_event_and_velocity_but_fails_global_gate(chain):
- p,a,b,old,new=chain;assert new.event_d_time_s<old.event_d_time_s;assert not new.certified;assert new.liquid_balance_relative_error>1e-2
+def test_incompatible_candidate_remains_rejected_after_dynamic_ipr(chain):
+ p,a,b,old,new=chain;assert new.event_d_time_s!=pytest.approx(old.event_d_time_s);assert not new.certified;assert new.liquid_balance_relative_error>1e-1
 
 def test_no_silent_switch_to_candidate_in_api_default(chain):
- _,_,_,old,_=chain;assert old.certified and old.event_d_time_s==pytest.approx(490.0673025,rel=2e-7)
+ _,_,_,old,_=chain;assert old.certified and old.event_d_time_s==pytest.approx(422.0498545,rel=2e-7)

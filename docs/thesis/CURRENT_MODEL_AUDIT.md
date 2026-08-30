@@ -97,13 +97,13 @@ La cadena satisface sus contratos numéricos internos y las 135 pruebas. Sin emb
 
 ## 5. Problema de IPR/afluencia
 
-`gli_api/simulation_service.py::reservoir_liquid_rate()` calcula un caudal constante con `PI × (presión estática de reservorio − presión de tubing en superficie)`. El caso base hace lo equivalente con 85.2 y 7.0 kgf/cm².
+Actualización Milestone 1.5: la ruta productiva ya no calcula un caudal constante con presión superficial. `gli.reservoir` evalúa la IPR lineal en SI a partir de la presión dinámica a profundidad de perforaciones.
 
 El potencial de afluencia debe responder a la presión fluyente de fondo en perforaciones, no a la presión superficial. La forma lineal mínima coherente es:
 
-`q_res(t) = max(0, PI · [P_res − P_wf(t)])`
+`q_res(t) = PI · [P_res − P_wf(t)]`
 
-con unidades consistentes y `P_wf(t)` obtenido del estado dinámico a profundidad de perforaciones. También puede usarse una IPR no lineal si la fuente o los datos lo justifican. El número exacto de una ecuación constitutiva IPR de Santos no quedó identificado en el material extraído: **SOURCE_MISSING** para esa cita puntual. La presión de reservorio, el índice de productividad, la variable `q_res` en balances y la presión de fondo sí están documentados.
+con `P_wf=P_t1+rho_l g(H_w-H_gv)`. El valor negativo no se recorta: se reporta como flujo inverso fuera del dominio de la IPR productora. El número exacto de una ecuación constitutiva IPR en la copia escaneada sigue sin cita puntual; la relación lineal es el contrato explícito y revisado de este hito, mientras que los balances Santos documentan `q_res`.
 
 ## 6. Sensibilidad y optimización actuales
 

@@ -76,5 +76,5 @@ def test_api_f_time_matches_audit_with_api_resolution_and_documents_coarse_step_
     api_f = result.points[-1].t
     assert abs(api_f - coarse_f) < 1e-6
     internal_base_case_f = audit.event_times_s["F_FILM_VELOCITY_ZERO"]
-    assert abs(api_f - internal_base_case_f) == pytest.approx(0.7260082457696, rel=1e-6)
+    assert abs(api_f - internal_base_case_f) == pytest.approx(0.2585271498665, rel=1e-6)
     assert audit.certified and api_resolution_audit.certified and api_params_coarse_audit.certified

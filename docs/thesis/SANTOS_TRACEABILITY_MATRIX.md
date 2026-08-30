@@ -12,7 +12,7 @@ Fuente primaria: O. G. dos Santos, capítulo 4 (modelo matemático), capítulo 5
 | D | comienza producción del tapón | frente del tapón entra al tramo productor |
 | E | cara inferior del tapón alcanza superficie | base del tapón = superficie |
 | F | película alcanza velocidad media cero | `v_f = 0` |
-| G | presión de gas en el fondo vuelve al valor inicial | `P_g,bottom − P_g,bottom,initial = 0`, con dirección correcta |
+| G | equilibrio final de descompresión en la formulación específica 4.3 | `P_t3−P_ts−rho_g g(H_gv−h_l)=0`; la recuperación de `P_t1` queda diagnóstica |
 | H | columna líquida acumulada recupera longitud inicial | `h_l − L_initial = 0`, con cruce creciente |
 
 En el ejemplo de Santos, la fase 4.1 de descompresión no aparece porque la GLV cierra antes de que la base del tapón alcance la superficie. Los segmentos observados son AC, BD, DE, EF, FG y GH (Tablas 5.6–5.7, página impresa 131).
@@ -26,7 +26,7 @@ En el ejemplo de Santos, la fase 4.1 de descompresión no aparece porque la GLV 
 | C→D, elevación tras cierre motor | mismo sistema de etapa 2; cierre GLV como evento interno | estado canónico de 14 componentes; enclavamiento GLV; balances gas/líquido | `stage_cd_common.py` corregido | IMPLEMENTADO |
 | D→E, producción | etapa 3; 4.1.53 sustituye relación de elevación correspondiente | salida de tapón, gas y película; volumen producido | `stage_de_dynamic.py` corregido | IMPLEMENTADO |
 | E→F, descompresión fase II | Tabla 5.1: 4.1.76, .80, .83, .84, .87, .89, .90 | expansión/descarga de gas, película aún ascendente, columna inferior, evento `v_f=0` | `stage_ef_dynamic.py` corregido | IMPLEMENTADO |
-| F→G, descompresión fase III | 4.1.89, .94, .97, .107, .108; cierres .24–.25 y .95–.103 | película descendente, gas central, columna inferior, entrada `q_res`; evento recuperación de presión de fondo | `stage_fg_dynamic.py`, `audit_stage_fg.py`; cadena científica interna A→G | IMPLEMENTADO — READY_FOR_REVIEW |
+| F→G, descompresión fase III | 4.1.89, .94, .97, .107, .108; cierres .24–.25 y .95–.103 | película descendente, gas central, columna inferior, IPR dinámica; evento de equilibrio de momento | `stage_fg_dynamic.py`, `audit_stage_fg.py`, `audit_milestone15.py` | IMPLEMENTADO — NOT_READY_FOR_GH |
 | G→H, alimentación | 4.1.94, .107, .109, con .95 y cierres geométricos/EOS | película descendente y líquido de formación alimentan columna; presión hidrostática; evento longitud inicial | no hay módulo ni evento terminal H integrado | FALTANTE |
 
 ## 3. Contrato implementado F→G
@@ -44,11 +44,11 @@ Sistema físico de la fase 4.3:
 
 El estado implementado es `[ρ_gt3, P_t3, P_t1, h_l, y, V_return, V_res, m_g,out]`, en SI. `A_B`, `A_f`, `q_f`, `ρ_gs`, `ρ_g`, `v_g`, `v_gs`, `ρ_gt1` y los inventarios se calculan algebraicamente con funciones nombradas. Los tres últimos estados son ledgers de procedencia y no sustituyen las cinco variables físicas del sistema Santos.
 
-Condiciones iniciales en F: se transfieren por identidad masa de gas, `y`, película, producido, fallback y entrada acumulada. E→F ahora expone el ledger derivado `q_res·t` sin modificar su solución. Como E→F almacena densidad/presión media del núcleo y Santos 4.3 necesita `ρ_gt3/P_t3` de fondo, el mapa usa 4.1.96 y EOS 4.1.101 conservando exactamente la masa; no proyecta una constante copiada. El salto entre la presión media reportada por E→F (4.9017 MPa) y la presión inferior transformada (9.0192 MPa) es un cambio documentado de representación espacial, no una continuidad de la misma variable.
+Condiciones iniciales en F: se transfieren por identidad masa de gas, `y`, película, producido, fallback y entrada acumulada. E→F integra el ledger dinámico `q_res(P_t1)`. Como E→F almacena densidad/presión media del núcleo y Santos 4.3 necesita `ρ_gt3/P_t3` de fondo, el mapa usa 4.1.96 y EOS 4.1.101 conservando exactamente la masa. Esa transformación espacial hace que `P_wb>P_r` al inicio de FG; el caudal bruto negativo se conserva y clasifica como inválido para la IPR productora.
 
-Evento terminal G implementado: `P_t1 − P_to,initial = 0`, terminal y dirección `−1`. G no se etiqueta como ciclo completo.
+Evento terminal G implementado: `P_t3−P_ts−ρ_g g(z_v−h_l)=0`, dirección `−1`. `P_t1−P_to,initial=0` se registra como diagnóstico no terminal. G no se etiqueta como ciclo completo.
 
-Resultado Santos 50/70/80, configuración base Radau `rtol=1e-8`, `atol=1e-10`, `max_step=0.5 s`: `t_F=526.778244 s`, `t_G=641.639013 s`, `Δt_FG=114.860769 s`; película retornada 0.315969 m³; entrada de reservorio 0.103960 m³; residual gas 4.54e-12 y líquido 8.02e-12. La IPR no se redefine: `q_res` sigue siendo la entrada externa actual, cuya ley constitutiva permanece `SOURCE_MISSING`.
+Resultado Milestone 1.5: `t_F=534.028521 s`; la raíz legacy ocurre `101.846418 s` después de F, pero el residual corregido no cruza cero hasta el horizonte ampliado de 10,000 s. En ese horizonte conserva balances (`2.59e-12` gas, `1.14e-13` líquido), pero la IPR presenta flujo inverso inválido al inicio de FG. Dictamen: `NOT_READY_FOR_GH`.
 
 ## 4. Contrato mínimo G→H
 

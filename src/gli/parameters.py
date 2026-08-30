@@ -78,6 +78,7 @@ class OperatingConditions:
     initial_slug_over_static_height: float | None = None
     injected_over_reference_gas_volume: float | None = None
     reservoir_static_pressure_pa: float | None = None
+    productivity_index_m3_s_pa: float | None = None
 
 
 @dataclass(frozen=True)

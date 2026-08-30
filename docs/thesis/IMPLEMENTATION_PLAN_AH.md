@@ -1,6 +1,6 @@
 # Plan técnico para completar A→H y ciclos estabilizados
 
-Principio rector: preservar las funciones A→F y sus 135 pruebas; agregar capacidad detrás de nuevos módulos y contratos. No refactorizar masivamente ni exponer un “ciclo completo” hasta que A→H supere continuidad, conservación y plausibilidad.
+Principio rector: preservar contratos verificables, permitir correcciones científicas trazadas en A→F y no exponer un “ciclo completo” hasta que A→H supere continuidad, conservación y plausibilidad.
 
 ## Arquitectura objetivo mínima
 
@@ -18,7 +18,7 @@ simulate_cycles / simulate_until_stabilized
 
 Cada `StageResult` debe contener tiempo, matriz de estado, muestras derivadas, evento terminal, diagnóstico de solver y un ledger de masa/volumen. `CycleResult` concatena sin duplicar fronteras y conserva resultados por etapa.
 
-## Hito 1 — F→G, descompresión fase III — IMPLEMENTADO / READY_FOR_REVIEW
+## Hito 1 — F→G, descompresión fase III — SUPERADO POR HITO 1.5
 
 ### Archivos creados
 
@@ -54,7 +54,20 @@ No fue necesario modificar `extended_continuity.py`: la continuidad específica 
 
 Configuración aprobada: `solve_ivp(method="Radau")`, `rtol=1e-8`, `atol=1e-10`, `max_step=0.5 s`, horizonte de seguridad 1200 s. Evento G terminal, dirección `−1`. Una corrida estricta (`rtol=1e-9`, `atol=1e-11`, `max_step=0.25 s`) reprodujo tiempo y estados terminales con diferencias relativas del orden de 1e-12.
 
-Limitación abierta: 4.1.107 exige `q_res`, pero este hito conserva el caudal externo existente y no redefine su IPR. Resolver la ley constitutiva es requisito previo de G→H.
+Las conclusiones antiguas de raíz G y `q_res` constante quedan reemplazadas por el Hito 1.5.
+
+## Hito 1.5 — reconciliación pre-G→H — IMPLEMENTADO / NOT_READY_FOR_GH
+
+- Mapa de presiones creado antes de editar ecuaciones.
+- IPR lineal dinámica en SI conectada a B→G donde corresponde.
+- Caudal negativo sin clipping, con clasificación explícita.
+- Evento G reemplazado por el residual de momento de 4.1.98–4.1.102.
+- Evento histórico conservado como diagnóstico no terminal.
+- Experimento de 10,000 s: una raíz legacy y ninguna raíz corregida.
+- La transformación espacial F produce flujo inverso inválido durante 32.737 s.
+- A→F conserva sus contratos; F→G conserva masa, pero no alcanza una frontera G admisible.
+
+Gate: no comenzar Hito 2 hasta resolver conjuntamente la representación espacial E→F/F, la presión `P_t1/P_wb` y la existencia de una raíz G finita sin calibración artificial.
 
 ## Hito 2 — G→H, alimentación
 

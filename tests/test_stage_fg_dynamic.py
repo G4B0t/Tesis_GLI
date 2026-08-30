@@ -4,8 +4,7 @@ import numpy as np
 import pytest
 
 from gli.audit_stage_fg import run_corrected_a_to_g_chain
-from gli.events import EVENT_G_GAS_PRESSURE_BACK_TO_INITIAL
-from gli.initial_conditions import initial_stage_1
+from gli.events import EVENT_G_MOMENTUM_EQUILIBRIUM, stage_g_momentum_residual
 from gli.stage_fg_dynamic import (
     HIGH_VELOCITY_WARNING,
     santos_stage_43_film_return_rate_m3_s,
@@ -76,22 +75,26 @@ def test_physical_bounds_and_warning(chain):
     assert fg.scientific_warning == HIGH_VELOCITY_WARNING
 
 
-def test_event_g_is_santos_bottom_pressure_event(chain):
+def test_event_g_uses_santos_momentum_residual_and_legacy_is_diagnostic(chain):
     values, _snapshot = chain
-    params, fg = values[0], values[-1]
-    target = initial_stage_1(params)["p_to"]
-    assert fg.event_g_reached
-    assert fg.event_identifier == EVENT_G_GAS_PRESSURE_BACK_TO_INITIAL
-    assert fg.bottom_gas_pressure_pa[0] > target
-    assert fg.bottom_gas_pressure_pa[-1] == pytest.approx(target, rel=1.0e-8)
+    fg = values[-1]
+    assert not fg.event_g_reached
+    assert fg.event_identifier == EVENT_G_MOMENTUM_EQUILIBRIUM
+    assert fg.momentum_residual_pa[0] > fg.momentum_residual_pa[-1] > 0.0
+    assert len(fg.legacy_event_times_s) == 1
+    assert 0.0 < fg.legacy_event_times_s[0] < fg.event_g_time_s
+
+
+def test_momentum_residual_is_zero_velocity_limit():
+    assert stage_g_momentum_residual(200.0, 100.0, 2.0, 5.0, 10.0) == 0.0
 
 
 def test_event_g_crosses_in_descending_direction(chain):
     values, _snapshot = chain
     fg = values[-1]
     assert fg.event_direction == -1.0
-    assert fg.event_direction_verified
-    assert fg.bottom_gas_pressure_pa[-2] > fg.bottom_gas_pressure_pa[-1]
+    assert not fg.event_direction_verified
+    assert fg.momentum_residual_pa[-2] > fg.momentum_residual_pa[-1]
 
 
 def test_gas_and_liquid_mass_balances_close(chain):
@@ -105,14 +108,17 @@ def test_gas_and_liquid_mass_balances_close(chain):
 
 def test_film_returns_to_bottom_with_separate_provenance(chain):
     values, _snapshot = chain
-    params, fg = values[0], values[-1]
+    _params, fg = values[0], values[-1]
     assert fg.film_returned_volume_m3[-1] > 0.0
     assert fg.film_volume_m3[-1] < fg.film_volume_m3[0]
     assert fg.bottom_liquid_volume_m3[-1] > fg.bottom_liquid_volume_m3[0]
     assert np.allclose(fg.produced_liquid_volume_m3, fg.produced_liquid_volume_m3[0])
-    expected_reservoir = params.operating.reservoir_liquid_rate_m3_s * fg.event_g_time_s
     actual_reservoir = fg.reservoir_accumulated_m3[-1] - fg.reservoir_accumulated_m3[0]
-    assert actual_reservoir == pytest.approx(expected_reservoir, rel=1.0e-10)
+    trapezoid_reservoir = np.trapezoid(fg.reservoir_rate_m3_s, fg.time_s)
+    assert actual_reservoir == pytest.approx(trapezoid_reservoir, rel=2.0e-5)
+    assert np.ptp(fg.reservoir_rate_m3_s) > 0.0
+    assert not fg.reservoir_inflow_valid
+    assert "INVALID_REVERSE_FLOW_FOR_LINEAR_IPR" in fg.reservoir_inflow_statuses
 
 
 def test_numerical_convergence_against_stricter_configuration(chain):
@@ -150,7 +156,8 @@ def test_internal_a_to_g_orchestration_and_reproducibility(chain):
     values, _snapshot = chain
     params, ef, first = values[0], values[-2], values[-1]
     second = simulate_stage_f_to_g(params, stage_e_f=ef, max_step_s=0.5)
-    assert first.event_g_reached
+    assert not first.event_g_reached
     assert first.event_g_time_s == pytest.approx(second.event_g_time_s, rel=1.0e-12)
     assert first.bottom_gas_pressure_pa[-1] == pytest.approx(second.bottom_gas_pressure_pa[-1], rel=1.0e-12)
+    assert first.legacy_event_times_s == pytest.approx(second.legacy_event_times_s, rel=1.0e-12)
     assert first.event_g_time_s > 0.0

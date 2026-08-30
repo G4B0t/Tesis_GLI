@@ -17,6 +17,7 @@ from .stage_bc_dynamic import StageBCResult, _gas_lift_mass_rate
 from .valves import motor_valve_gas_rate
 from .block6p_parameters import FrictionClosure, friction_factor
 from .stage_ef_dynamic import default_stage_ef_parameters
+from .reservoir import reservoir_inflow_from_pt1
 
 I_MC,I_MG,I_RHO,I_PG,I_VG,I_VF,I_Y,I_MFILM,I_HB,I_HL,I_VL,I_VGI,I_FB,I_PROD=range(14)
 
@@ -64,7 +65,7 @@ def rhs_bc_common(_t,s,params:GLIParameters):
     dvg=params.coefficients.bubble_velocity_a*dvl # Santos 4.1.50
     dhb=vg
     # Reservoir influx increases the liquid slug inventory at its moving top.
-    qres=params.operating.reservoir_liquid_rate_m3_s
+    qres=reservoir_inflow_from_pt1(params,pg,rho_l).rate_m3_s
     dhl=vl+qres/At
     # Moving-boundary liquid balance: dV_liq/dt=q_res.  Since dhl already
     # contains q_res/At, q_res cancels analytically from the y equation.
@@ -115,7 +116,7 @@ def rhs_bc_santos_compatible(_t,s,params:GLIParameters):
     dvl=(-vl*vl+(Af/At)*vf*vf+(Ab/At)*vg*vg+(pt2-pt3)/rho_l-GRAVITY_M_S2*L-fl*vl*abs(vl)*L/(2*D))/L
     dvg=params.coefficients.bubble_velocity_a*dvl
     dhb=vg;dhl=vl
-    qres=params.operating.reservoir_liquid_rate_m3_s
+    qres=reservoir_inflow_from_pt1(params,pg,rho_l).rate_m3_s
     dy=(qres-Af*vf)/(2*pi*max(r-y,1e-12)*max(hb,1e-12))
     dAb=-2*pi*(r-y)*dy;dAf=-dAb
     N=At*vl-Ab*vg;dN=At*dvl-dAb*vg-Ab*dvg
@@ -142,9 +143,15 @@ def simulate_stage_b_to_c_common(params:GLIParameters,*,stage_a_b=None,max_time_
     rho_std=standard_gas_density(params);gas=s[I_MC]+s[I_MG];expected=gas[0]+rho_std*(s[I_VGI]-s[I_VGI,0]);ge=float(np.max(abs(gas-expected))/max(abs(gas[-1]-gas[0]),1))
     g=params.gas;D=params.geometry.tubing_diameter_m;r=D/2;Ab=pi*(r-s[I_Y])**2;V=Ab*s[I_HB];peos=s[I_MG]*g.z_t1*g.gas_constant_j_mol_k*g.temp_t1_k/(g.gas_molar_mass_kg_mol*np.maximum(V,1e-12));ee=float(np.max(abs(peos-s[I_PG])/np.maximum(peos,1)))
     At=tubing_area(D);liq=At*(s[I_HL]-s[I_HB])+s[I_MFILM]/initial_stage_1(params)['rho_l']+s[I_FB]+s[I_PROD]
-    expected_liq=liq[0]+params.operating.reservoir_liquid_rate_m3_s*t
+    rho_l=initial_stage_1(params)['rho_l']
+    qres=np.array([reservoir_inflow_from_pt1(params,float(x),rho_l).rate_m3_s for x in s[I_PG]])
+    native_q=np.array([reservoir_inflow_from_pt1(params,float(x),rho_l).rate_m3_s for x in sol.y[I_PG]])
+    native_reservoir=np.concatenate(([0.0],np.cumsum(0.5*(native_q[1:]+native_q[:-1])*np.diff(sol.t))))
+    reservoir=np.interp(t,sol.t,native_reservoir)
+    expected_liq=liq[0]+reservoir
     le=float(np.max(abs(liq-expected_liq))/max(expected_liq[-1],1e-12))
     physical=bool(np.all(s[I_RHO]>0) and np.all(s[I_PG]>0) and np.all((s[I_Y]>0)&(s[I_Y]<r)) and np.max(abs(s[I_VG]))<20 and np.max(abs(s[I_VF]))<20)
+    inflow_valid=bool(all(reservoir_inflow_from_pt1(params,float(x),initial_stage_1(params)['rho_l']).physically_valid for x in s[I_PG]))
     certified=bool(reached and ge<1e-6 and le<1e-6 and ee<1e-5 and physical)
     assumption="B bubble seed h=1e-3 m; film fraction=.0199; vf(B) explicit sensitivity input"
     if compatible:

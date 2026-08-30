@@ -13,8 +13,9 @@ import numpy as np
 from scipy.integrate import solve_ivp
 
 from .events import (
-    EVENT_G_GAS_PRESSURE_BACK_TO_INITIAL,
+    EVENT_G_MOMENTUM_EQUILIBRIUM,
     gas_pressure_back_to_initial_residual,
+    stage_g_momentum_residual,
 )
 from .fallback import falling_film_velocity_m_s
 from .fluids import gas_density_real
@@ -22,6 +23,7 @@ from .geometry import gas_bubble_area, tubing_area
 from .initial_conditions import GRAVITY_M_S2, initial_stage_1
 from .parameters import GLIParameters
 from .stage_ef_dynamic import StageEFResult
+from .reservoir import reservoir_inflow_from_pt1
 
 
 HIGH_VELOCITY_WARNING = "HIGH_VELOCITY_PLAUSIBILITY_REVIEW_PENDING"
@@ -60,6 +62,13 @@ class StageFGResult:
     gas_mass_kg: np.ndarray
     gas_discharged_mass_kg: np.ndarray
     surface_gas_rate_kg_s: np.ndarray
+    bottomhole_flowing_pressure_pa: np.ndarray
+    reservoir_rate_m3_s: np.ndarray
+    reservoir_inflow_valid: bool
+    reservoir_inflow_statuses: tuple[str, ...]
+    momentum_residual_pa: np.ndarray
+    legacy_pressure_residual_pa: np.ndarray
+    legacy_event_times_s: tuple[float, ...]
     event_g_reached: bool
     event_g_time_s: float
     event_identifier: str
@@ -176,11 +185,11 @@ def simulate_stage_f_to_g(
 ) -> StageFGResult:
     """Integrate Santos final decompression from the actual terminal F state.
 
-    ``max_time_s`` is only a numerical failure guard.  Successful termination
-    is exclusively the descending Santos event ``P_t1 - P_to_initial = 0``.
-    The externally supplied ``reservoir_liquid_rate_m3_s`` is retained as the
-    q_res input required by 4.1.107; this function does not define or alter an
-    IPR constitutive law.
+    ``max_time_s`` is only a numerical failure guard. Successful termination
+    is exclusively the descending zero-velocity limit of Santos
+    4.1.98-4.1.102. The historical ``P_t1-P_to_initial`` root is recorded as a
+    non-terminal diagnostic on the same trajectory. The reservoir rate is
+    evaluated from instantaneous P_t1 using the configured SI IPR.
     """
 
     if method != "Radau":
@@ -200,12 +209,9 @@ def simulate_stage_f_to_g(
     At = tubing_area(D)
     rho_l = float(initial["rho_l"])
     mu_l = float(params.fluids.liquid_viscosity_pa_s)
-    q_res = float(params.operating.reservoir_liquid_rate_m3_s)
     p_surface = float(params.operating.surface_tubing_pressure_pa)
     p_initial = float(initial["p_to"])
     f_g = float(params.coefficients.gas_friction_factor)
-    if q_res < 0.0:
-        raise ValueError("Santos stage 4.3 input q_res must be non-negative")
     if f_g <= 0.0:
         raise ValueError("Santos gas friction factor must be positive")
 
@@ -234,8 +240,6 @@ def simulate_stage_f_to_g(
     rho_gt3_0 = 2.0 * mean_rho0 - rho_surface  # Santos 4.1.96
     pt3_0 = k_t3 * rho_gt3_0  # Santos 4.1.101
     pt1_0 = pt3_0 + rho_l * GRAVITY_M_S2 * h0  # integral of 4.1.89
-    if pt1_0 <= p_initial:
-        raise ValueError("F bottom gas pressure is not above the Santos G target")
 
     continuity = (
         _continuity("gas_mass", stage_e_f.gas_mass_kg[-1], gas_mass0, "kg"),
@@ -266,8 +270,8 @@ def simulate_stage_f_to_g(
             raise ValueError("F->G film thickness is outside [0, tubing radius)")
         if h_l < 0.0 or h_l >= H:
             raise ValueError("F->G liquid height is outside [0, valve depth)")
-        if returned < -1e-12 or reservoir < -1e-12 or gas_out < -1e-12:
-            raise ValueError("F->G cumulative ledgers must remain non-negative")
+        if returned < -1e-12 or gas_out < -1e-12:
+            raise ValueError("F->G fallback/gas cumulative ledgers must remain non-negative")
         Ab = gas_bubble_area(D, y)
         Af = At - Ab
         gas_length = H - h_l
@@ -276,12 +280,19 @@ def simulate_stage_f_to_g(
         radicand = (2.0 * D / f_g) * (
             (pt3 - p_surface) / (rho_mean * gas_length) - GRAVITY_M_S2
         )
-        if radicand < 0.0:
-            raise ValueError("Santos 4.1.99 produced an invalid negative gas-velocity radicand")
-        v_g = sqrt(radicand)  # Santos 4.1.99
+        residual = stage_g_momentum_residual(
+            pt3, p_surface, rho_mean, gas_length, GRAVITY_M_S2
+        )
+        radicand_tolerance = (2.0 * D / f_g) * 10.0 / max(rho_mean * gas_length, 1e-18)
+        if radicand < -radicand_tolerance:
+            raise ValueError("Santos 4.1.99 left the real gas-velocity domain")
+        # Numerical continuation used only while Radau brackets the zero; no
+        # post-event state is retained in the reported physical trajectory.
+        v_g = sqrt(max(radicand, 0.0))  # Santos 4.1.99
         v_gs = 2.0 * v_g  # Santos 4.1.102-103
         gas_mass = rho_mean * Ab * gas_length
         gas_rate = rho_surface * v_gs * Ab
+        inflow = reservoir_inflow_from_pt1(params, pt1, rho_l)
         return {
             "Ab": Ab,
             "Af": Af,
@@ -293,6 +304,11 @@ def simulate_stage_f_to_g(
             "v_gs": v_gs,
             "gas_mass": gas_mass,
             "gas_rate": gas_rate,
+            "p_wb": inflow.bottomhole_pressure_pa,
+            "q_res": inflow.rate_m3_s,
+            "inflow": inflow,
+            "momentum_residual": residual,
+            "legacy_residual": gas_pressure_back_to_initial_residual(pt1, p_initial),
             "film_volume": Af * H,
             "bottom_volume": Ab * h_l,
         }
@@ -302,7 +318,7 @@ def simulate_stage_f_to_g(
         a = algebraic(state)
         dy = -a["q_f"] / (2.0 * pi * H * (r - y))  # Santos 4.1.94
         dh = (
-            2.0 * pi * (r - y) * h_l * dy + a["q_f"] + q_res
+            2.0 * pi * (r - y) * h_l * dy + a["q_f"] + a["q_res"]
         ) / a["Ab"]  # Santos 4.1.107
         drho_gt3 = (
             (rho_gt3 + rho_surface) * dh
@@ -312,7 +328,7 @@ def simulate_stage_f_to_g(
         dpt3 = k_t3 * drho_gt3  # Santos 4.1.108
         dpt1 = dpt3 + rho_l * GRAVITY_M_S2 * dh  # Santos 4.1.89
         return np.array(
-            [drho_gt3, dpt3, dpt1, dh, dy, a["q_f"], q_res, a["gas_rate"]],
+            [drho_gt3, dpt3, dpt1, dh, dy, a["q_f"], a["q_res"], a["gas_rate"]],
             dtype=float,
         ), a
 
@@ -320,16 +336,23 @@ def simulate_stage_f_to_g(
         return derivatives(state)[0]
 
     def event_g(_time_s: float, state: np.ndarray) -> float:
-        return gas_pressure_back_to_initial_residual(float(state[2]), p_initial)
+        return algebraic(state)["momentum_residual"]
 
     event_g.terminal = True
     event_g.direction = -1.0
+    def legacy_event(_time_s: float, state: np.ndarray) -> float:
+        return gas_pressure_back_to_initial_residual(float(state[2]), p_initial)
+
+    legacy_event.terminal = False
+    legacy_event.direction = -1.0
+    if algebraic(state0)["momentum_residual"] <= 0.0:
+        raise ValueError("F state does not precede the Santos momentum-equilibrium G event")
     sol = solve_ivp(
         rhs,
         (0.0, max_time_s),
         state0,
         method=method,
-        events=event_g,
+        events=(event_g, legacy_event),
         dense_output=True,
         max_step=max_step_s,
         rtol=rtol,
@@ -378,14 +401,16 @@ def simulate_stage_f_to_g(
         failed_bounds.append("positive_gas_inventory")
     if bool(np.any(np.diff(states[5]) < -1.0e-12)):
         failed_bounds.append("monotone_fallback_ledger")
-    if bool(np.any(np.diff(states[6]) < -1.0e-12)):
-        failed_bounds.append("monotone_reservoir_ledger")
-
+    momentum = arr("momentum_residual")
+    legacy = arr("legacy_residual")
+    inflows = [item["inflow"] for item in algebraics]
+    inflow_valid = bool(all(item.physically_valid for item in inflows))
+    inflow_statuses = tuple(dict.fromkeys(item.status.value for item in inflows))
     direction_verified = bool(
         reached
         and times.size >= 2
-        and float(states[2, -2]) > float(states[2, -1])
-        and abs(float(states[2, -1]) - p_initial) <= max(1.0, rtol * p_initial)
+        and float(momentum[-2]) > float(momentum[-1])
+        and abs(float(momentum[-1])) <= max(1.0, rtol * max(abs(float(states[1, -1])), 1.0))
     )
     return StageFGResult(
         time_s=times,
@@ -408,9 +433,16 @@ def simulate_stage_f_to_g(
         gas_mass_kg=gas_mass,
         gas_discharged_mass_kg=gas_out,
         surface_gas_rate_kg_s=arr("gas_rate"),
+        bottomhole_flowing_pressure_pa=arr("p_wb"),
+        reservoir_rate_m3_s=arr("q_res"),
+        reservoir_inflow_valid=inflow_valid,
+        reservoir_inflow_statuses=inflow_statuses,
+        momentum_residual_pa=momentum,
+        legacy_pressure_residual_pa=legacy,
+        legacy_event_times_s=tuple(float(x) for x in sol.t_events[1]),
         event_g_reached=reached,
         event_g_time_s=end,
-        event_identifier=EVENT_G_GAS_PRESSURE_BACK_TO_INITIAL,
+        event_identifier=EVENT_G_MOMENTUM_EQUILIBRIUM,
         event_direction=-1.0,
         event_direction_verified=direction_verified,
         gas_balance_absolute_residual_kg=gas_abs,

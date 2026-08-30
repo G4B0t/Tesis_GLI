@@ -2,7 +2,7 @@
 from dataclasses import dataclass
 from math import pi, sqrt
 import numpy as np
-from scipy.integrate import solve_ivp
+from scipy.integrate import quad, solve_ivp
 
 from .geometry import tubing_area
 from .initial_conditions import GRAVITY_M_S2, initial_stage_1
@@ -12,6 +12,7 @@ from .stage_cd_dynamic import StageCDResult, simulate_stage_c_to_d
 from .stage1_dynamic import state_from_mass
 from .valves import gas_lift_valve_resultant_force
 from .fallback import fallback_rate_m3_s
+from .reservoir import reservoir_inflow_from_pt1
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,8 @@ class StageDEResult:
     liquid_balance_relative_error: float
     film_velocity_m_s: np.ndarray | None = None
     gas_density_kg_m3: np.ndarray | None = None
+    reservoir_inflow_valid: bool = True
+    reservoir_accumulated_m3: np.ndarray | None = None
 
 
 def simulate_stage_d_to_e(params: GLIParameters, *, stage_c_d: StageCDResult | None = None,
@@ -193,13 +196,14 @@ def _simulate_stage_d_to_e_santos_corrected(
             (params.geometry.perforation_depth_m or H) - H, 0.0)
         qprod = max(At * vl, 0.0)
         qfb = max(-Af * vf, 0.0)
-        return casing, Ab, Af, Vg, force, opened, mgl, pt2, pt3, L, slug, pwf, qprod, qfb
+        qres = reservoir_inflow_from_pt1(params, pt1, rho_l)
+        return casing, Ab, Af, Vg, force, opened, mgl, pt2, pt3, L, slug, pwf, qprod, qfb, qres
 
     def rhs(_t, state):
         mc, mg, rho_g, pt1, vg, vf, y, film, hb, vl, fb, prod = state
         x = values(state)
         Ab, Af, Vg, pt2, pt3, L = x[1], x[2], x[3], x[7], x[8], x[9]
-        qres = params.operating.reservoir_liquid_rate_m3_s
+        qres = x[14].rate_m3_s
         # Santos stage 3 keeps h_l fixed at z_v and keeps the same liquid mass
         # relation as stage 2, while adding the surface loss term 0.3*v_l^2 in
         # the momentum equation (4.1.53).
@@ -247,10 +251,26 @@ def _simulate_stage_d_to_e_santos_corrected(
     gas_total = states[0] + states[1]
     gas_error = float(np.max(np.abs(gas_total - gas_total[0])) / max(gas_total[0], 1.0))
     inventory = arr(10) + states[7] + states[10] + states[11]
-    expected_inventory = inventory[0] + params.operating.reservoir_liquid_rate_m3_s * times
-    liquid_error = float(np.max(np.abs(inventory - expected_inventory)) / max(expected_inventory[-1], 1e-12))
+    qres_values = arr(14)
+    qres_values = np.array([item.rate_m3_s for item in qres_values])
+    reservoir = np.array([
+        quad(
+            lambda time: reservoir_inflow_from_pt1(
+                params, float(sol.sol(time)[3]), rho_l
+            ).rate_m3_s,
+            0.0,
+            float(time),
+            epsabs=1e-12,
+            epsrel=1e-11,
+            limit=100,
+        )[0]
+        for time in times
+    ])
+    expected_inventory = inventory[0] + reservoir
+    liquid_error = float(np.max(np.abs(inventory - expected_inventory)) / max(abs(expected_inventory[-1]), 1e-12))
+    inflow_valid = bool(all(item.physically_valid for item in arr(14)))
     return StageDEResult(
         times, states[0], states[1], states[8], np.full_like(times, H),
         states[4], states[9], arr(12), states[11], arr(10), states[7], states[10],
         pc1, pc2, states[3], arr(11), arr(6), arr(4), arr(5),
-        reached, end, gas_error, liquid_error, states[5], states[2])
+        reached, end, gas_error, liquid_error, states[5], states[2], inflow_valid, reservoir)

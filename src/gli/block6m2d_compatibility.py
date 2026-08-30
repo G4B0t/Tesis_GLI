@@ -29,6 +29,7 @@ from .stage_bc_common import (
     I_Y,
 )
 from .stage_cd_common import _cd_terms_santos, simulate_stage_c_to_d_common
+from .reservoir import reservoir_inflow_from_pt1
 
 
 @dataclass(frozen=True)
@@ -104,7 +105,7 @@ def compatibility_residuals_c(
     mg = float(state[I_MG])
     rho = float(state[I_RHO])
     pg = float(state[I_PG])
-    qres = params.operating.reservoir_liquid_rate_m3_s
+    qres = reservoir_inflow_from_pt1(params, pg, rho_l).rate_m3_s
     d, _, _ = _cd_terms_santos(state, params, True)
 
     Vg = Ab * hb

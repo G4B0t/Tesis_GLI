@@ -235,7 +235,9 @@ def corrected_residuals_d(params, cd_common, de_corrected) -> tuple[ResidualD, .
         + de_corrected.fallback_volume_m3
         + de_corrected.produced_volume_m3
     )
-    expected = inventory[0] + params.operating.reservoir_liquid_rate_m3_s * de_corrected.time_s
+    if de_corrected.reservoir_accumulated_m3 is None:
+        raise ValueError("corrected D->E result must expose its dynamic reservoir ledger")
+    expected = inventory[0] + de_corrected.reservoir_accumulated_m3
     vf0 = float(de_corrected.film_velocity_m_s[0]) if de_corrected.film_velocity_m_s is not None else float("nan")
     rho0 = float(de_corrected.gas_density_kg_m3[0]) if de_corrected.gas_density_kg_m3 is not None else float("nan")
     residuals = []
@@ -287,7 +289,9 @@ def run_block6m3_audit(max_step_s: float = 0.5) -> Block6M3Audit:
     corrected_inventory = (
         de_corrected.slug_volume_m3 + de_corrected.film_volume_m3
         + de_corrected.fallback_volume_m3 + de_corrected.produced_volume_m3)
-    corrected_expected = corrected_inventory[0] + params.operating.reservoir_liquid_rate_m3_s * de_corrected.time_s
+    if de_corrected.reservoir_accumulated_m3 is None:
+        raise ValueError("corrected D->E result must expose its dynamic reservoir ledger")
+    corrected_expected = corrected_inventory[0] + de_corrected.reservoir_accumulated_m3
     max_norm = max(r.normalized for r in residuals)
     corrected_max_norm = max(r.normalized for r in corrected_residuals)
     certified = bool(

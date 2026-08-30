@@ -35,7 +35,7 @@ def test_residual_vector_identifies_blocking_terms(audit):
 
 
 def test_legacy_liquid_balance_uses_wrong_reference_inventory(audit):
-    assert audit.legacy_liquid_balance_error > 0.5
+    assert audit.legacy_liquid_balance_error > 0.1
     assert audit.reservoir_missing_m3 > 0.0
     assert audit.corrected_inventory_residual_m3 < audit.reservoir_missing_m3
     assert audit.corrected_liquid_balance_error < 1e-10

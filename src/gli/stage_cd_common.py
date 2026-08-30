@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from math import pi
 from math import exp
 import numpy as np
-from scipy.integrate import solve_ivp
+from scipy.integrate import cumulative_simpson, solve_ivp
 from .stage_bc_common import *
 from .stage_bc_common import _gas_lift_mass_rate
 from .initial_conditions import GRAVITY_M_S2,initial_stage_1
@@ -13,6 +13,7 @@ from .valves import gas_lift_valve_resultant_force
 from .block6p_parameters import FrictionClosure,friction_factor,ScalarParameter,ProvenanceClass
 from .stage_ef_dynamic import default_stage_ef_parameters
 from .stage_cd_dynamic import StageCDResult
+from .reservoir import reservoir_inflow_from_pt1
 
 @dataclass(frozen=True)
 class StageCDCommonResult:
@@ -45,7 +46,7 @@ def _cd_terms(state,params,glv_open,roughness_m=None,friction_scale=1.0):
     fc=FrictionClosure(rp)
     ff_l,_=friction_factor(max(rho_l*abs(vl)*D/params.fluids.liquid_viscosity_pa_s,1e-12),D,fc);ff_l*=friction_scale
     dvl=(pg-ini['p_t3']-rho_l*GRAVITY_M_S2*slug-ff_l*.5*rho_l*vl*abs(vl)*slug/D)/(rho_l*slug)
-    dvg=params.coefficients.bubble_velocity_a*dvl;dhb=vg;qres=params.operating.reservoir_liquid_rate_m3_s;dhl=vl+qres/At
+    dvg=params.coefficients.bubble_velocity_a*dvl;dhb=vg;qres=reservoir_inflow_from_pt1(params,pg,rho_l).rate_m3_s;dhl=vl+qres/At
     dy=(At*(vg-vl)-Af*vg)/(max(hb,1e-12)*2*pi*max(r-y,1e-12))
     dmg=mgl;dmc=-mgl;dV=Ab*dhb-2*pi*(r-y)*hb*dy;drho=dmg/V-rho*dV/V
     dpg=g.z_t1*g.gas_constant_j_mol_k*g.temp_t1_k/g.gas_molar_mass_kg_mol*drho
@@ -79,7 +80,7 @@ def _cd_terms_santos(state,params,glv_open,roughness_m=None,friction_scale=1.0):
     dvl=(-vl*vl+(Af/At)*vf*vf+(Ab/At)*vg*vg+(pt2-pt3)/rho_l-GRAVITY_M_S2*L-fl*vl*abs(vl)*L/(2*D))/L
     dvg=params.coefficients.bubble_velocity_a*dvl
     dhb=vg;dhl=vl
-    qres=params.operating.reservoir_liquid_rate_m3_s
+    qres=reservoir_inflow_from_pt1(params,pt1,rho_l).rate_m3_s
     # Elevation-film mass balance, Santos 4.1.35 (not fixed-zv 4.1.57).
     dy=(qres-Af*vf)/(2*pi*max(r-y,1e-12)*max(hb,1e-12))
     dAb=-2*pi*(r-y)*dy;dAf=-dAb
@@ -120,7 +121,15 @@ def simulate_stage_c_to_d_common(params,*,stage_b_c_common=None,stage_a_b=None,m
         use_pre=(not closed) or x<=tc;s[:,i]=(pre.sol(x) if use_pre else parts[-1].sol(x));opened[i]=use_pre
     terms=[terms_fn(s[:,i],params,bool(opened[i]),roughness_m,friction_scale) for i in range(len(t))];force=np.array([x[1] for x in terms]);mgl=np.array([x[2] for x in terms])
     gas=s[I_MC]+s[I_MG];ge=float(np.max(abs(gas-gas[0]))/max(gas[0],1))
-    At=tubing_area(params.geometry.tubing_diameter_m);rho_l=initial_stage_1(params)['rho_l'];liq=At*(s[I_HL]-s[I_HB])+s[I_MFILM]/rho_l+s[I_FB]+s[I_PROD];expected=liq[0]+params.operating.reservoir_liquid_rate_m3_s*t;le=float(np.max(abs(liq-expected))/max(expected[-1],1e-12))
+    At=tubing_area(params.geometry.tubing_diameter_m);rho_l=initial_stage_1(params)['rho_l'];liq=At*(s[I_HL]-s[I_HB])+s[I_MFILM]/rho_l+s[I_FB]+s[I_PROD]
+    qres=np.array([reservoir_inflow_from_pt1(params,float(x),rho_l).rate_m3_s for x in s[I_PG]])
+    native_t=pre.t;native_pg=pre.y[I_PG]
+    if len(parts)>1:
+        native_t=np.concatenate((native_t,parts[-1].t[1:]));native_pg=np.concatenate((native_pg,parts[-1].y[I_PG,1:]))
+    native_q=np.array([reservoir_inflow_from_pt1(params,float(x),rho_l).rate_m3_s for x in native_pg])
+    native_reservoir=cumulative_simpson(native_q,x=native_t,initial=0.0)
+    reservoir=np.interp(t,native_t,native_reservoir)
+    expected=liq[0]+reservoir;le=float(np.max(abs(liq-expected))/max(abs(expected[-1]),1e-12))
     g=params.gas;r=params.geometry.tubing_diameter_m/2;Ab=pi*(r-s[I_Y])**2;peos=s[I_MG]*g.z_t1*g.gas_constant_j_mol_k*g.temp_t1_k/(g.gas_molar_mass_kg_mol*np.maximum(Ab*s[I_HB],1e-12));ee=float(np.max(abs(peos-s[I_PG])/np.maximum(peos,1)))
     ce=float(np.max(abs(s[:,0]-s0))/max(np.max(abs(s0)),1));physical=bool(np.all(s[I_RHO]>0)&np.all(s[I_PG]>0)&np.all(s[I_Y]>0)&np.all(s[I_Y]<r)&(np.max(abs(s[I_VF]))<10)&np.all(s[I_HB]<s[I_HL]+1e-9))
     # A latched closure cannot reopen within C->D.  If the force remains
@@ -128,5 +137,6 @@ def simulate_stage_c_to_d_common(params,*,stage_b_c_common=None,stage_a_b=None,m
     # event occurs in this stage (not a certification failure).
     no_reopen=not np.any(opened[np.flatnonzero(~opened)[0]:]) if np.any(~opened) else True
     control_ok=(closed and no_reopen and np.all(mgl[~opened]==0.0)) or ((not closed) and np.all(force>=-1e-8))
+    inflow_valid=bool(all(reservoir_inflow_from_pt1(params,float(x),rho_l).physically_valid for x in s[I_PG]))
     certified=bool(reached and control_ok and ge<1e-6 and le<1e-6 and ee<1e-5 and ce<1e-10 and physical)
     return StageCDCommonResult(t,s,opened,mgl,force,closed,tc,reached,end,ge,le,ee,ce,stiff,certified)

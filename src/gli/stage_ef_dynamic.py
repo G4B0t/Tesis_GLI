@@ -11,6 +11,7 @@ from .geometry import tubing_area
 from .initial_conditions import GRAVITY_M_S2, initial_stage_1
 from .parameters import GLIParameters
 from .stage_de_dynamic import StageDEResult, simulate_stage_d_to_e
+from .reservoir import reservoir_inflow_from_pt1
 
 @dataclass(frozen=True)
 class StageEFParameters:
@@ -39,6 +40,7 @@ class StageEFResult:
     fallback_volume_m3: np.ndarray | None = None
     corrected_certified: bool = False
     rhs_mode: str = "legacy"
+    reservoir_inflow_valid: bool = True
 
 def simulate_stage_e_to_f(params: GLIParameters, *, stage_d_e: StageDEResult|None=None,
         closure: StageEFParameters|None=None, max_time_s=240., max_step_s=.05,
@@ -186,7 +188,7 @@ def _simulate_stage_e_to_f_santos_corrected(params: GLIParameters, de: StageDERe
         return Ab, Af, fg, ff
 
     def derived(state):
-        mg, vg, y, vf, film, produced, fallback, gas_out = state
+        mg, vg, y, vf, film, produced, fallback, gas_out, reservoir = state
         Ab, Af = geometry(y)
         rho = mg / max(Ab * H, 1e-18)
         pt = mg * gas.z_t1 * gas.gas_constant_j_mol_k * gas.temp_t1_k / (
@@ -195,7 +197,7 @@ def _simulate_stage_e_to_f_santos_corrected(params: GLIParameters, de: StageDERe
         return rho, pt, Ab, Af
 
     def derivatives(state):
-        mg, vg, y, vf, film, produced, fallback, gas_out = state
+        mg, vg, y, vf, film, produced, fallback, gas_out, reservoir = state
         rho, pt, Ab, Af = derived(state)
         _Ab, _Af, fg, ff = closures(rho, vg, vf, y)
         qfilm = max(vf, 0.0) * Af
@@ -218,9 +220,14 @@ def _simulate_stage_e_to_f_santos_corrected(params: GLIParameters, de: StageDERe
             - ff * vf * abs(vf) * pi * r / (4 * Af)
             + (pt - params.operating.surface_tubing_pressure_pa) / (rho_l * H)
         )
-        return np.array([dmg, dvg, dy, dvf, -qfilm, qfilm, 0.0, mdot]), mdot, shear
+        qres = reservoir_inflow_from_pt1(params, pt, rho_l)
+        return np.array([dmg, dvg, dy, dvf, -qfilm, qfilm, 0.0, mdot, qres.rate_m3_s]), mdot, shear, qres
 
-    state0 = np.array([mg0, vg0, y0, vf0, film0, prod0, fallback0, 0.0], dtype=float)
+    initial_liquid = At * params.geometry.initial_slug_length_m
+    reservoir0 = (
+        float(de.slug_volume_m3[-1]) + film0 + fallback0 + prod0 - initial_liquid
+    )
+    state0 = np.array([mg0, vg0, y0, vf0, film0, prod0, fallback0, 0.0, reservoir0], dtype=float)
 
     def rhs(_t, state):
         return derivatives(state)[0]
@@ -241,6 +248,7 @@ def _simulate_stage_e_to_f_santos_corrected(params: GLIParameters, de: StageDERe
     diagnostics = [derivatives(s[:, i]) for i in range(s.shape[1])]
     md = np.array([x[1] for x in diagnostics])
     tau = np.array([x[2] for x in diagnostics])
+    inflow_valid = bool(all(x[3].physically_valid for x in diagnostics))
     rho = np.empty_like(t)
     pt = np.empty_like(t)
     for i in range(t.size):
@@ -263,9 +271,9 @@ def _simulate_stage_e_to_f_santos_corrected(params: GLIParameters, de: StageDERe
     )
     return StageEFResult(
         t, rho, pt, s[1], s[2], s[3], s[0], md, tau, s[4], s[5],
-        np.zeros_like(t), params.operating.reservoir_liquid_rate_m3_s * t,
+        np.zeros_like(t), s[8],
         np.zeros_like(t, dtype=bool),
         reached, end, gas_error, liquid_error,
         "Identity E map from D->E santos_corrected; rho_g, m_g, P_t1, v_g, v_f, y, film, fallback and produced ledgers transported without projection",
-        s[6], certified, "santos_corrected"
+        s[6], certified, "santos_corrected", inflow_valid
     )

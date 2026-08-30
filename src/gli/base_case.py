@@ -19,6 +19,7 @@ from .parameters import (
     ValveParameters,
 )
 from .units import fahrenheit_to_kelvin, inch_to_m, kgf_cm2_gauge_to_pa_absolute
+from .reservoir import productivity_index_m3_day_kgf_cm2_to_si
 
 GRAVITY_M_S2 = 9.80665
 SECONDS_PER_DAY = 86_400.0
@@ -112,6 +113,7 @@ def santos_50_70_80() -> GLIParameters:
             initial_slug_over_static_height=0.50,
             injected_over_reference_gas_volume=0.80,
             reservoir_static_pressure_pa=p_reservoir,
+            productivity_index_m3_s_pa=productivity_index_m3_day_kgf_cm2_to_si(1.0),
         ),
         coefficients=ModelCoefficients(),
     )

@@ -7,6 +7,7 @@ from .initial_conditions import GRAVITY_M_S2,initial_stage_1
 from .block6p_parameters import FrictionClosure,friction_factor
 from .stage_ef_dynamic import default_stage_ef_parameters
 from .stage_bc_common import *
+from .reservoir import reservoir_inflow_from_pt1
 
 VF_PHYSICAL_LIMIT_M_S=10.0
 
@@ -34,7 +35,7 @@ def decompose_film_momentum(state,params)->FilmMomentumTerms:
     pressure=(pg-ini['p_t3'])/(rho_l*params.geometry.valve_depth_m)
     wall=-tau_w*(2*pi*r)/(rho_l*max(af,1e-15))
     interface=tau_i*(2*pi*(r-y))/(rho_l*max(af,1e-15))
-    qres=params.operating.reservoir_liquid_rate_m3_s
+    qres=reservoir_inflow_from_pt1(params,float(pg),rho_l).rate_m3_s
     vres=qres/max(af,1e-15)
     inertia=-(vf*vf-vres*vres)/params.geometry.valve_depth_m
     # Obtain dy/dt from the same unmodified common RHS so the moving-area
@@ -54,7 +55,7 @@ def instantaneous_liquid_residual(state,derivative,params):
     # The ledger is included only because the same rate is removed from film:
     # it represents the receiving compartment, never duplicated mass.
     inventory_rate=At*(derivative[I_HL]-derivative[I_HB])+derivative[I_MFILM]/rho_l+derivative[I_FB]+derivative[I_PROD]
-    qres=params.operating.reservoir_liquid_rate_m3_s
+    qres=reservoir_inflow_from_pt1(params,float(state[I_PG]),rho_l).rate_m3_s
     return {"inventory_rate_m3_s":inventory_rate,"reservoir_rate_m3_s":qres,"residual_m3_s":inventory_rate-qres,
             "moving_slug_boundary_m3_s":At*(derivative[I_HL]-derivative[I_HB]),"film_geometry_m3_s":derivative[I_MFILM]/rho_l,
             "fallback_ledger_m3_s":derivative[I_FB],"produced_m3_s":derivative[I_PROD]}

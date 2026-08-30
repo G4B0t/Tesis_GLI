@@ -24,6 +24,8 @@ from gli.stage_ef_dynamic import simulate_stage_e_to_f
 from gli.reference_cases import REFERENCE_CASES,SANTOS_50_70_80
 from gli.reference_gas import injected_gas_target_std_m3, liao_reference_gas_volume_std_m3
 from gli.valves import gas_lift_valve_resultant_force
+from gli.reservoir import productivity_index_m3_day_kgf_cm2_to_si
+from gli.units import kgf_cm2_gauge_to_pa_absolute
 
 from .database import save_simulation as persist_simulation
 from .schemas import (
@@ -85,6 +87,7 @@ def build_parameters(inputs: SimulationInputs) -> GLIParameters:
             annulus_cross_area_m2=annulus_cross_area_m2,
             valve_depth_m=inputs.valveDepth,
             initial_slug_length_m=inputs.slugLength,
+            perforation_depth_m=inputs.wellDepth,
         ),
         fluids=FluidProperties(
             api=inputs.api,
@@ -111,17 +114,24 @@ def build_parameters(inputs: SimulationInputs) -> GLIParameters:
             pto_over_pvo=inputs.casingPressureOpenRatio,
             reservoir_liquid_rate_m3_s=reservoir_liquid_rate(inputs),
             injected_over_reference_gas_volume=inputs.injectedGasReferenceRatio,
+            reservoir_static_pressure_pa=kgf_cm2_gauge_to_pa_absolute(inputs.staticReservoirPressure),
+            productivity_index_m3_s_pa=productivity_index_m3_day_kgf_cm2_to_si(inputs.productivityIndex),
         ),
         coefficients=ModelCoefficients(),
     )
 
 
 def reservoir_liquid_rate(inputs: SimulationInputs) -> float:
-    """Estimate reservoir feeding rate from Santos table 5.5 inputs."""
+    """Legacy nominal rate retained only for compatibility/report estimates.
+
+    Production ODEs evaluate the SI IPR from instantaneous P_t1. This nominal
+    value uses the surface pressure solely as a non-dynamic initialization
+    estimate and performs no clipping.
+    """
 
     wellhead_pressure_kgf_cm2 = inputs.surfaceTubingPressure * MPA_TO_PA / KGF_CM2_TO_PA
-    drawdown_kgf_cm2 = max(0.0, inputs.staticReservoirPressure - wellhead_pressure_kgf_cm2)
-    rate_m3_day = max(0.1, inputs.productivityIndex * drawdown_kgf_cm2)
+    drawdown_kgf_cm2 = inputs.staticReservoirPressure - wellhead_pressure_kgf_cm2
+    rate_m3_day = inputs.productivityIndex * drawdown_kgf_cm2
     return rate_m3_day / SECONDS_PER_DAY
 
 
