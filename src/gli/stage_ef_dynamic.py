@@ -263,7 +263,8 @@ def _simulate_stage_e_to_f_santos_corrected(params: GLIParameters, de: StageDERe
     )
     return StageEFResult(
         t, rho, pt, s[1], s[2], s[3], s[0], md, tau, s[4], s[5],
-        np.zeros_like(t), np.zeros_like(t), np.zeros_like(t, dtype=bool),
+        np.zeros_like(t), params.operating.reservoir_liquid_rate_m3_s * t,
+        np.zeros_like(t, dtype=bool),
         reached, end, gas_error, liquid_error,
         "Identity E map from D->E santos_corrected; rho_g, m_g, P_t1, v_g, v_f, y, film, fallback and produced ledgers transported without projection",
         s[6], certified, "santos_corrected"

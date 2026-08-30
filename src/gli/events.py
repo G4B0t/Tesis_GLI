@@ -1,6 +1,9 @@
 """Event functions that control transitions between GLI stages."""
 
 
+EVENT_G_GAS_PRESSURE_BACK_TO_INITIAL = "G_GAS_PRESSURE_BACK_TO_INITIAL"
+
+
 def gas_lift_valve_opened(resultant_force_n: float, tolerance_n: float = 1.0e-6) -> bool:
     """Return True when the gas-lift valve opening condition is reached."""
 
@@ -34,3 +37,18 @@ def gas_pressure_back_to_initial(
     """Return True when decompression reaches the initial gas pressure."""
 
     return abs(current_pressure_pa - initial_pressure_pa) <= tolerance_pa
+
+
+def gas_pressure_back_to_initial_residual(
+    current_pressure_pa: float,
+    initial_pressure_pa: float,
+) -> float:
+    """Signed Santos F->G event residual.
+
+    Santos stage 4.3 ends when the gas pressure at the bottom of the well
+    returns to its initial value.  A positive residual is expected throughout
+    final decompression and the physical transition G is a descending
+    zero-crossing.
+    """
+
+    return current_pressure_pa - initial_pressure_pa
