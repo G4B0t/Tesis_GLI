@@ -21,30 +21,28 @@ def santos_input(**updates) -> SimulationInputs:
     return SimulationInputs(**data)
 
 
-def test_exact_santos_api_input_remains_certified():
+def test_exact_santos_api_input_is_blocked_by_stage42_source_gate():
     result = simulate(santos_input())
 
-    assert result.validationLevel == "certified"
-    assert result.physicalScope.startswith("A_TO_F certified:")
-    assert result.terminalEvent == "F_FILM_VELOCITY_ZERO"
+    assert result.validationLevel == "failed"
+    assert result.physicalScope.startswith("NOT_SOURCE_CERTIFIED_A_TO_F:")
+    assert result.terminalEvent == "E_SLUG_BASE_REACHED_SURFACE"
 
 
-def test_inside_block7b_matrix_is_candidate_not_certified():
+def test_inside_block7b_matrix_cannot_override_source_equation_failure():
     result = simulate(santos_input(injectionPressure=6.966 * 1.03, slugLength=412.5 * 0.98))
 
-    assert result.validationLevel == "validated_range_candidate"
-    assert result.terminalEvent == "F_FILM_VELOCITY_ZERO"
-    assert result.physicalScope.startswith("A_TO_F validated_range_candidate:")
-    assert any("falta validación independiente" in item for item in result.modelLimitations)
+    assert result.validationLevel == "failed"
+    assert result.terminalEvent == "E_SLUG_BASE_REACHED_SURFACE"
+    assert result.physicalScope.startswith("NOT_SOURCE_CERTIFIED_A_TO_F:")
 
 
-def test_outside_block7b_matrix_is_not_a_design_validated_result_even_if_chain_runs():
+def test_outside_block7b_matrix_is_still_blocked_first_by_source_gate():
     result = simulate(santos_input(injectionPressure=6.966 * 1.20))
 
-    assert result.validationLevel == "out_of_domain"
-    assert result.terminalEvent == "F_FILM_VELOCITY_ZERO"
-    assert result.physicalScope.startswith("A_TO_F out_of_domain:")
-    assert any("injectionPressure" in item for item in result.modelLimitations)
+    assert result.validationLevel == "failed"
+    assert result.terminalEvent == "E_SLUG_BASE_REACHED_SURFACE"
+    assert result.physicalScope.startswith("NOT_SOURCE_CERTIFIED_A_TO_F:")
 
 
 def test_design_domain_classifier_reports_outside_fields_without_running_physics():

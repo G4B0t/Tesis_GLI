@@ -69,6 +69,18 @@ Las conclusiones antiguas de raíz G y `q_res` constante quedan reemplazadas por
 
 Gate: no comenzar Hito 2 hasta resolver conjuntamente la representación espacial E→F/F, la presión `P_t1/P_wb` y la existencia de una raíz G finita sin calibración artificial.
 
+## Hito 1.6 — reconstrucción Stage 4.2 — IMPLEMENTADO / NOT_READY_FOR_GH
+
+Se implementaron las ecuaciones 4.1.76/.80/.83/.84/.87/.89/.90 como sistema
+de siete variables y se retiraron de F→G las reconstrucciones de altura desde
+ledgers y de densidad de fondo desde densidad media. El gate de identidad en E
+detectó incompatibilidad entre el inventario gaseoso D→E y 4.1.88/4.1.90
+(`residuo=0.7255765`). En consecuencia, A→F es
+`NOT_SOURCE_CERTIFIED_A_TO_F`, no existe F físico y F→G no se ejecuta.
+
+Gate actualizado: reconstruir primero el estado gaseoso espacial terminal de
+D→E sin proyección ni ajuste de coeficientes.
+
 ## Hito 2 — G→H, alimentación
 
 ### Archivos exactos a crear

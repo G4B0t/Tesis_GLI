@@ -33,7 +33,7 @@ def test_parameter_bands_are_local_and_traceable():
     assert "Bloque 7A" in bands["api"].basis
 
 
-def test_small_design_matrix_can_become_validated_range_candidate_but_not_commercial_domain():
+def test_design_matrix_stops_when_reference_source_gate_fails():
     scenarios = (
         MatrixScenario("santos_reference", "Caso base", {}),
         MatrixScenario("pressure_slug_low_corner", "Presión y golfada bajas", {
@@ -49,11 +49,17 @@ def test_small_design_matrix_can_become_validated_range_candidate_but_not_commer
     audit = run_block7b_design_matrix(scenarios=scenarios, max_step_s=1.0)
 
     assert audit.commercial_domain_certified is False
-    assert audit.validated_range_candidate is True
-    assert audit.failed_scenarios == ()
+    assert audit.validated_range_candidate is False
+    assert audit.failed_scenarios == (
+        "santos_reference",
+        "pressure_slug_low_corner",
+        "pressure_slug_high_corner",
+    )
     assert audit.provisional_scenarios == ()
     assert audit.scenario_count == 3
-    assert audit.max_residual_normalized < 1e-8
-    assert "No reemplaza validación con casos independientes" in audit.statement
-    assert audit.results[0].status == "certified_reference"
-    assert all(r.status == "validated_range_candidate" for r in audit.results[1:])
+    assert audit.max_residual_normalized == 1.0
+    assert all(result.status == "failed" for result in audit.results)
+    assert all(
+        result.failed_contracts == ("stage42_e_source_compatibility", "ef_certified")
+        for result in audit.results
+    )

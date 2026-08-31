@@ -54,41 +54,28 @@ def test_glv_remains_closed_in_audited_ef_path(audit):
     assert by_name["glv_closed_no_reopen"].value == 0.0
 
 
-def test_santos_corrected_ef_receives_e_without_projection(audit):
-    assert audit.corrected_certified
-    assert audit.corrected_event_f_reached
-    assert audit.corrected_event_f_time_s is not None
-    assert audit.corrected_failed_contracts == ()
-    assert audit.corrected_max_residual_normalized < 1e-8
-    assert "transported without projection" in audit.corrected_initial_state_source
+def test_exact_stage42_rejects_incompatible_e_without_projection(audit):
+    assert not audit.corrected_certified
+    assert not audit.corrected_event_f_reached
+    assert audit.corrected_event_f_time_s is None
+    assert audit.corrected_failed_contracts == (
+        "stage42_eos_E",
+        "stage42_eos_volume_domain",
+    )
+    assert "NOT_SOURCE_CERTIFIED_A_TO_F" in audit.corrected_initial_state_source
 
 
-def test_santos_corrected_ef_continuity_and_ledgers(audit):
+def test_stage42_e_boundary_passes_hydrostatics_but_fails_eos(audit):
     by_name = {r.name: r for r in audit.corrected_residuals}
-    for name in (
-        "corrected_rho_g_continuity",
-        "corrected_m_g_continuity",
-        "corrected_P_t1_continuity",
-        "corrected_v_g_memory",
-        "corrected_v_f_memory",
-        "corrected_y_continuity",
-        "corrected_fallback_ledger",
-        "corrected_produced_ledger",
-    ):
+    for name in ("stage42_h_l_E", "stage42_hydrostatic_E", "stage42_inventory_E"):
         assert by_name[name].status == "ok"
         assert by_name[name].normalized < 1e-8
+    assert by_name["stage42_eos_E"].status == "fail"
+    assert by_name["stage42_eos_E"].normalized == pytest.approx(0.7255764980, rel=1e-8)
+    assert by_name["stage42_eos_volume_domain"].status == "fail"
 
 
-def test_santos_corrected_ef_balances_glv_and_event_f(audit):
-    by_name = {r.name: r for r in audit.corrected_residuals}
-    assert by_name["corrected_glv_closed_no_reopen"].status == "ok"
-    assert by_name["corrected_gas_balance"].status == "ok"
-    assert by_name["corrected_liquid_balance"].status == "ok"
-    assert by_name["corrected_liquid_inventory_initial"].status == "ok"
-    assert by_name["corrected_event_f_descending"].status == "ok"
-
-
-def test_public_api_is_promoted_only_after_block6m5_certification():
+def test_public_api_is_not_promoted_when_stage42_source_gate_fails():
     inputs = SimulationInputs(
         tubingDiameter=0.050673,
         valveDepth=1480.0,
@@ -103,7 +90,7 @@ def test_public_api_is_promoted_only_after_block6m5_certification():
         projectistName="QA",
     )
     result = simulate(inputs)
-    assert result.validationLevel == "certified"
-    assert result.terminalEvent == "F_FILM_VELOCITY_ZERO"
-    assert "A_TO_F certified" in result.physicalScope
-    assert result.points[-1].stage == "E_F"
+    assert result.validationLevel == "failed"
+    assert result.terminalEvent == "E_SLUG_BASE_REACHED_SURFACE"
+    assert "NOT_SOURCE_CERTIFIED_A_TO_F" in result.physicalScope
+    assert result.points[-1].stage == "D_E"

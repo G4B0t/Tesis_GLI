@@ -20,7 +20,7 @@ from .stage1_dynamic import simulate_stage_1
 from .stage_bc_common import simulate_stage_b_to_c_common
 from .stage_cd_common import common_to_stage_cd_result, simulate_stage_c_to_d_common
 from .stage_de_dynamic import simulate_stage_d_to_e
-from .stage_ef_dynamic import simulate_stage_e_to_f
+from .stage_ef_dynamic import audit_stage_42_initial_state, simulate_stage_e_to_f
 
 
 @dataclass(frozen=True)
@@ -347,91 +347,51 @@ def audit_ef_boundary(params=None, *, max_step_s: float = 0.2) -> Block6M4Audit:
 
 def _audit_corrected_route(p, de, rho_l, y_e, gas_density_e, film_velocity_e):
     residuals: list[ResidualEF] = []
-    ef = simulate_stage_e_to_f(p, stage_d_e=de, rhs_mode="santos_corrected", max_step_s=0.01)
-    produced_e = float(de.produced_volume_m3[-1])
-    fallback_e = float(de.fallback_volume_m3[-1])
-    liquid_e = float(de.film_volume_m3[-1]) + produced_e + fallback_e
-    liquid_ef_initial = (
-        float(ef.film_volume_m3[0])
-        + float(ef.produced_film_volume_m3[0])
-        + float(ef.fallback_volume_m3[0])
-    )
-
+    audit = audit_stage_42_initial_state(p, de)
     _add_residual(
-        residuals, name="corrected_rho_g_continuity", contract="rho_g(E+) - rho_g(E-) = 0",
-        value=float(ef.gas_density_kg_m3[0]) - gas_density_e, scale=max(abs(gas_density_e), 1.0),
-        units="kg/m3", tolerance=1e-8, interpretation="rho_g se recibe por identidad desde D->E corregido."
+        residuals, name="stage42_h_l_E", contract="h_l(E)=0 para el ejemplo sin fase I",
+        value=audit.liquid_height_m, scale=1.0, units="m", tolerance=0.0,
+        interpretation="Santos: la columna inferior empieza a formarse al cerrar la GLV."
     )
     _add_residual(
-        residuals, name="corrected_m_g_continuity", contract="m_g(E+) - m_g(E-) = 0",
-        value=float(ef.gas_mass_kg[0]) - float(de.bubble_mass_kg[-1]),
-        scale=max(abs(float(de.bubble_mass_kg[-1])), 1.0), units="kg", tolerance=1e-8,
-        interpretation="m_g se recibe por identidad desde D->E corregido."
+        residuals, name="stage42_hydrostatic_E", contract="P_t1-P_t3-rho_l*g*h_l=0",
+        value=audit.hydrostatic_residual_pa, scale=max(abs(audit.pressure_t1_pa), 1.0),
+        units="Pa", tolerance=1e-10,
+        interpretation="4.1.88 fija P_t3(E)=P_t1(E) cuando h_l(E)=0."
     )
     _add_residual(
-        residuals, name="corrected_P_t1_continuity", contract="P_t1(E+) - P_t1(E-) = 0",
-        value=float(ef.tubing_pressure_pa[0]) - float(de.p_tubing_pa[-1]),
-        scale=max(abs(float(de.p_tubing_pa[-1])), 1.0), units="Pa", tolerance=1e-8,
-        interpretation="P_t1 se recibe por identidad desde D->E corregido."
+        residuals, name="stage42_inventory_E", contract="rho_g=m_g/[A_B(z_v-h_l)]",
+        value=audit.gas_density_from_inventory_kg_m3 - gas_density_e,
+        scale=max(abs(gas_density_e), 1.0), units="kg/m3", tolerance=1e-8,
+        interpretation="La masa y geometría de D->E sí determinan la densidad de inventario por identidad."
     )
     _add_residual(
-        residuals, name="corrected_v_g_memory", contract="v_g(E+) - v_g(E-) = 0",
-        value=float(ef.gas_velocity_m_s[0]) - float(de.v_b_m_s[-1]),
-        scale=max(abs(float(de.v_b_m_s[-1])), 1.0), units="m/s", tolerance=1e-12,
-        interpretation="v_g ya no se recalcula desde descarga superficial."
+        residuals, name="stage42_eos_E", contract="rho_g=0.5*(P_t3/K_t3+rho_gs)",
+        value=(audit.gas_density_from_inventory_kg_m3 - audit.gas_density_from_eos_kg_m3),
+        scale=max(abs(audit.gas_density_from_eos_kg_m3), 1.0), units="kg/m3", tolerance=1e-6,
+        interpretation=(
+            "El terminal D->E no satisface simultáneamente inventario, 4.1.88 y 4.1.90; "
+            "proyectarlo está prohibido."
+        )
+    )
+    volume_excess = max(
+        audit.gas_volume_required_by_eos_m3 - audit.maximum_geometric_gas_volume_m3,
+        0.0,
     )
     _add_residual(
-        residuals, name="corrected_v_f_memory", contract="v_f(E+) - v_f(E-) = 0",
-        value=float(ef.film_velocity_m_s[0]) - film_velocity_e,
-        scale=max(abs(film_velocity_e), 1.0), units="m/s", tolerance=1e-12,
-        interpretation="v_f ya no se reconstruye algebraicamente."
-    )
-    _add_residual(
-        residuals, name="corrected_y_continuity", contract="y(E+) - y(E-) = 0",
-        value=float(ef.film_thickness_m[0]) - y_e, scale=max(abs(y_e), 1e-6),
-        units="m", tolerance=1e-8, interpretation="El espesor de película es continuo."
-    )
-    _add_residual(
-        residuals, name="corrected_fallback_ledger", contract="fallback(E+) - fallback(E-) = 0",
-        value=float(ef.fallback_volume_m3[0]) - fallback_e, scale=max(abs(fallback_e), 1.0),
-        units="m3", tolerance=1e-12, interpretation="El ledger fallback acumulado se transporta."
-    )
-    _add_residual(
-        residuals, name="corrected_produced_ledger", contract="producido(E+) - producido(E-) = 0",
-        value=float(ef.produced_film_volume_m3[0]) - produced_e, scale=max(abs(produced_e), 1.0),
-        units="m3", tolerance=1e-12, interpretation="El producido acumulado no se reinicia."
-    )
-    _add_residual(
-        residuals, name="corrected_glv_closed_no_reopen", contract="GLV cerrada y sin reapertura",
-        value=float(np.max(ef.valve_open.astype(float))), scale=1.0, units="booleano", tolerance=0.0,
-        interpretation="E->F corregido conserva la frontera GLV cerrada."
-    )
-    _add_residual(
-        residuals, name="corrected_gas_balance", contract="m_g + gas producido = constante",
-        value=float(ef.gas_balance_relative_error), scale=1.0, units="adim.", tolerance=1e-8,
-        interpretation="Balance acumulado de gas en E->F corregido."
-    )
-    _add_residual(
-        residuals, name="corrected_liquid_balance", contract="film + producido + fallback = constante",
-        value=float(ef.liquid_balance_relative_error), scale=1.0, units="adim.", tolerance=1e-8,
-        interpretation="Balance líquido acumulado incluyendo ledgers previos."
-    )
-    descending = bool(ef.event_f_reached and len(ef.film_velocity_m_s) >= 2 and ef.film_velocity_m_s[-2] > ef.film_velocity_m_s[-1] >= -1e-7)
-    _add_residual(
-        residuals, name="corrected_event_f_descending", contract="F: v_f = 0 con cruce descendente",
-        value=0.0 if descending else 1.0, scale=1.0, units="adim.", tolerance=0.0,
-        interpretation="El evento terminal F se certifica por cruce descendente de v_f."
-    )
-    _add_residual(
-        residuals, name="corrected_liquid_inventory_initial", contract="I_liq(E+) - I_liq(E-) = 0",
-        value=liquid_ef_initial - liquid_e, scale=max(abs(liquid_e), 1.0), units="m3", tolerance=1e-10,
-        interpretation="La ruta corregida inicia con el inventario líquido acumulado completo."
+        residuals, name="stage42_eos_volume_domain",
+        contract="m_g/rho_g,EOS <= A_B*z_v",
+        value=volume_excess,
+        scale=max(audit.maximum_geometric_gas_volume_m3, 1e-12), units="m3", tolerance=1e-8,
+        interpretation="La EOS requeriría más volumen gaseoso que el máximo geométrico del tubing."
     )
     return residuals, {
-        "event_f_time_s": float(ef.event_f_time_s) if ef.event_f_reached else None,
-        "event_f_reached": bool(ef.event_f_reached),
-        "corrected_certified": bool(ef.corrected_certified and not any(r.status != "ok" for r in residuals)),
-        "initial_state_source": ef.initial_state_source,
+        "event_f_time_s": None,
+        "event_f_reached": False,
+        "corrected_certified": False,
+        "initial_state_source": (
+            "NOT_SOURCE_CERTIFIED_A_TO_F: identity E map blocked by 4.1.83/4.1.88/4.1.90 incompatibility"
+        ),
     }
 
 

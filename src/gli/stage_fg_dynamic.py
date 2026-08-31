@@ -70,7 +70,8 @@ class StageFGResult:
     legacy_pressure_residual_pa: np.ndarray
     legacy_event_times_s: tuple[float, ...]
     event_g_reached: bool
-    event_g_time_s: float
+    event_g_time_s: float | None
+    integration_end_time_s: float
     event_identifier: str
     event_direction: float
     event_direction_verified: bool
@@ -187,9 +188,10 @@ def simulate_stage_f_to_g(
 
     ``max_time_s`` is only a numerical failure guard. Successful termination
     is exclusively the descending zero-velocity limit of Santos
-    4.1.98-4.1.102. The historical ``P_t1-P_to_initial`` root is recorded as a
-    non-terminal diagnostic on the same trajectory. The reservoir rate is
-    evaluated from instantaneous P_t1 using the configured SI IPR.
+    4.1.98-4.1.102. The historical ``P_t1-P_to_initial`` root is not the
+    current Santos terminal event and is recorded only as a non-terminal
+    diagnostic. The reservoir rate is evaluated from instantaneous P_t1 using
+    the configured SI IPR.
     """
 
     if method != "Radau":
@@ -225,6 +227,15 @@ def simulate_stage_f_to_g(
     k_t3 = gas.z_t3 * gas.gas_constant_j_mol_k * gas.temp_t3_k / gas.gas_molar_mass_kg_mol
     k_t1 = gas.z_t1 * gas.gas_constant_j_mol_k * gas.temp_t1_k / gas.gas_molar_mass_kg_mol
 
+    if (
+        stage_e_f.liquid_height_m is None
+        or stage_e_f.gas_pressure_at_liquid_top_pa is None
+        or stage_e_f.physical_lower_liquid_volume_m3 is None
+    ):
+        raise ValueError(
+            "F->G requires explicit Stage 4.2 h_l, P_t3 and V_lower; "
+            "ledger-to-spatial reconstruction is prohibited"
+        )
     y0 = float(stage_e_f.film_thickness_m[-1])
     film0 = float(stage_e_f.film_volume_m3[-1])
     fallback0 = float(stage_e_f.fallback_volume_m3[-1])
@@ -234,12 +245,13 @@ def simulate_stage_f_to_g(
     gas_out0 = float(stage_e_f.gas_mass_kg[0] - stage_e_f.gas_mass_kg[-1])
     Ab0 = gas_bubble_area(D, y0)
     expected_film0 = (At - Ab0) * H
-    h0 = (reservoir0 + fallback0) / Ab0
+    h0 = float(stage_e_f.liquid_height_m[-1])
     gas_length0 = H - h0
-    mean_rho0 = gas_mass0 / (Ab0 * gas_length0)
-    rho_gt3_0 = 2.0 * mean_rho0 - rho_surface  # Santos 4.1.96
-    pt3_0 = k_t3 * rho_gt3_0  # Santos 4.1.101
-    pt1_0 = pt3_0 + rho_l * GRAVITY_M_S2 * h0  # integral of 4.1.89
+    mean_rho0 = float(stage_e_f.gas_density_kg_m3[-1])
+    pt3_0 = float(stage_e_f.gas_pressure_at_liquid_top_pa[-1])
+    pt1_0 = float(stage_e_f.tubing_pressure_pa[-1])
+    rho_gt3_0 = pt3_0 / k_t3  # 4.1.101, algebraic from the same F pressure
+    lower_volume0 = float(stage_e_f.physical_lower_liquid_volume_m3[-1])
 
     continuity = (
         _continuity("gas_mass", stage_e_f.gas_mass_kg[-1], gas_mass0, "kg"),
@@ -248,6 +260,18 @@ def simulate_stage_f_to_g(
         _continuity("produced_liquid_ledger", stage_e_f.produced_film_volume_m3[-1], produced0, "m3"),
         _continuity("fallback_ledger", stage_e_f.fallback_volume_m3[-1], fallback0, "m3"),
         _continuity("reservoir_ledger", stage_e_f.reservoir_accumulated_m3[-1], reservoir0, "m3"),
+        _continuity("liquid_height", stage_e_f.liquid_height_m[-1], h0, "m"),
+        _continuity("pressure_t1", stage_e_f.tubing_pressure_pa[-1], pt1_0, "Pa"),
+        _continuity("pressure_t3", stage_e_f.gas_pressure_at_liquid_top_pa[-1], pt3_0, "Pa"),
+        _continuity("lower_liquid_volume", lower_volume0, Ab0 * h0, "m3", atol=1e-10),
+        _continuity(
+            "mean_gas_density",
+            stage_e_f.gas_density_kg_m3[-1],
+            0.5 * (rho_gt3_0 + rho_surface),
+            "kg/m3",
+            atol=1e-10,
+        ),
+        _continuity("gas_inventory", stage_e_f.gas_mass_kg[-1], mean_rho0 * Ab0 * gas_length0, "kg", atol=1e-9),
     )
     if not all(item.passed for item in continuity):
         failed = ", ".join(item.name for item in continuity if not item.passed)
@@ -441,7 +465,8 @@ def simulate_stage_f_to_g(
         legacy_pressure_residual_pa=legacy,
         legacy_event_times_s=tuple(float(x) for x in sol.t_events[1]),
         event_g_reached=reached,
-        event_g_time_s=end,
+        event_g_time_s=end if reached else None,
+        integration_end_time_s=end,
         event_identifier=EVENT_G_MOMENTUM_EQUILIBRIUM,
         event_direction=-1.0,
         event_direction_verified=direction_verified,
@@ -464,8 +489,9 @@ def simulate_stage_f_to_g(
         f_previous_mean_pressure_pa=float(stage_e_f.tubing_pressure_pa[-1]),
         f_transformed_bottom_pressure_pa=pt1_0,
         initial_state_source=(
-            "Identity transfer of F gas mass, film geometry and liquid ledgers from "
-            "E->F santos_corrected; Santos 4.1.96 transforms mean gas density to rho_gt3"
+            "Identity transfer of F h_l, P_t1, P_t3, mean gas density, gas mass, "
+            "film geometry and provenance ledgers from exact Stage 4.2; rho_gt3 "
+            "is recomputed algebraically from the same P_t3 by Santos 4.1.101"
         ),
         scientific_warning=HIGH_VELOCITY_WARNING,
     )

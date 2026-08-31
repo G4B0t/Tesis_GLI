@@ -44,12 +44,11 @@ def gas_pressure_back_to_initial_residual(
     current_pressure_pa: float,
     initial_pressure_pa: float,
 ) -> float:
-    """Signed Santos F->G event residual.
+    """Legacy pressure-recovery diagnostic; not the current G event.
 
-    Santos stage 4.3 ends when the gas pressure at the bottom of the well
-    returns to its initial value.  A positive residual is expected throughout
-    final decompression and the physical transition G is a descending
-    zero-crossing.
+    The source-consistent terminal candidate used by the corrected route is
+    :func:`stage_g_momentum_residual`. This residual is retained only to
+    compare historical Milestone-1.5 behavior on the same trajectory.
     """
 
     return current_pressure_pa - initial_pressure_pa

@@ -225,7 +225,7 @@ def build_validation_rows(
 
 
 def simulate(inputs: SimulationInputs) -> SimulationResult:
-    """Run the corrected A->F chain for the fully specified Santos case."""
+    """Run the source-qualified chain; expose no uncertified Stage-4.2 points."""
 
     if inputs.caseId != SANTOS_50_70_80.case_id:
         raise ValueError("Only the fully specified Santos case can be simulated; Liao Table 5.14 is a partial benchmark")
@@ -242,7 +242,9 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
         raise RuntimeError("Certified common C_TO_D segment required")
     dynamic_cd = common_to_stage_cd_result(dynamic_cd_common, params)
     dynamic_de = simulate_stage_d_to_e(params, stage_c_d=dynamic_cd, rhs_mode="santos_corrected")
-    dynamic_ef = simulate_stage_e_to_f(params, stage_d_e=dynamic_de, rhs_mode="santos_corrected")
+    dynamic_ef = simulate_stage_e_to_f(
+        params, stage_d_e=dynamic_de, rhs_mode="milestone15_corrected"
+    )
     if dynamic_de.film_velocity_m_s is None:
         raise RuntimeError("Certified D_TO_E segment must expose film velocity memory")
     chain_certified = (
@@ -330,12 +332,12 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
             motorValveRate=0.0,glvMassRate=float(mgl)))
     offset_e=offset_d+dynamic_de.event_e_time_s
     annulus_e=float(dynamic_de.p_c1_pa[-1]*PA_TO_MPA)
-    for t,pt,vg,vf,y,film,fb,prod,mdot,is_open in zip(
+    for t,pt,vg,vf,y,film,fb,prod,mdot,is_open in (zip(
         dynamic_ef.time_s[1:],dynamic_ef.tubing_pressure_pa[1:],
         dynamic_ef.gas_velocity_m_s[1:],dynamic_ef.film_velocity_m_s[1:],
         dynamic_ef.film_thickness_m[1:],dynamic_ef.film_volume_m3[1:],
         dynamic_ef.fallback_volume_m3[1:],dynamic_ef.produced_film_volume_m3[1:],
-        dynamic_ef.surface_gas_rate_kg_s[1:],dynamic_ef.valve_open[1:]):
+        dynamic_ef.surface_gas_rate_kg_s[1:],dynamic_ef.valve_open[1:]) if chain_certified else ()):
         points.append(SimulationPoint(
             t=float(offset_e+t),pressure=float(pt*PA_TO_MPA),force=0.0,
             gasRate=float(mdot),stage="E_F",annulusPressure=annulus_e,
@@ -351,7 +353,7 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
             pTo=stage_1["p_to"] * PA_TO_MPA,
             pVo=stage_1["p_vo"] * PA_TO_MPA,
             pBt=stage_1["p_bt"] * PA_TO_MPA,
-            duration=dynamic.opening_time_s+dynamic_bc.event_c_time_s+dynamic_cd.event_d_time_s+dynamic_de.event_e_time_s+dynamic_ef.event_f_time_s,
+            duration=dynamic.opening_time_s+dynamic_bc.event_c_time_s+dynamic_cd.event_d_time_s+dynamic_de.event_e_time_s,
             vgRef=liao_reference_gas_volume_std_m3(params),
             vgiTarget=injected_gas_target_std_m3(params),
         )
@@ -365,8 +367,6 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
                       duration=float(dynamic_cd.event_d_time_s)),
         StageDuration(stage="D_E", startTime=float(offset_d), endTime=float(offset_e),
                       duration=float(dynamic_de.event_e_time_s)),
-        StageDuration(stage="E_F", startTime=float(offset_e), endTime=float(duration),
-                      duration=float(dynamic_ef.event_f_time_s)),
     ]
     balance_errors = [
         BalanceError(
@@ -392,12 +392,6 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
             liquidRelativeError=float(dynamic_de.liquid_balance_relative_error),
             source="StageDEResult gas/liquid balance closures",
         ),
-        BalanceError(
-            stage="E_F",
-            gasRelativeError=float(dynamic_ef.gas_balance_relative_error),
-            liquidRelativeError=float(dynamic_ef.liquid_balance_relative_error),
-            source="StageEFResult gas/liquid balance closures",
-        ),
     ]
     diagnostic_variables = [
         DiagnosticVariable(
@@ -411,10 +405,10 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
         DiagnosticVariable(
             name="filmVelocity",
             unit="m/s",
-            source="StageDEResult.film_velocity_m_s and StageEFResult.film_velocity_m_s",
-            formula="Santos corrected film momentum/memory state",
-            stage="D_E/E_F",
-            certification="Exposed from corrected Santos stages already used by the A->F certified chain.",
+            source="StageDEResult.film_velocity_m_s",
+            formula="D->E film momentum/memory state",
+            stage="D_E",
+            certification="Stage 4.2 is not exposed because its identity E map fails the source contract.",
         ),
         DiagnosticVariable(
             name="motorValveRate",
@@ -435,10 +429,10 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
         DiagnosticVariable(
             name="stageDurations",
             unit="s",
-            source="event times from Stage1Result and StageBC/CD/DE/EF results",
+            source="event times from Stage1Result and StageBC/CD/DE results",
             formula="event_end_time - event_start_time",
             stage="A_F",
-            certification="Durations are direct event times from the certified solver chain.",
+            certification="Durations stop at E; the former E->F reference is not source-certified.",
         ),
     ]
     film_velocities = [abs(point.filmVelocity) for point in points if point.filmVelocity is not None]
@@ -459,10 +453,10 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
             value=produced_liquid_per_cycle,
             unit="m3/ciclo",
             formula="V_producido_final",
-            assumption="Volumen producido acumulado al evento terminal F.",
-            source="SimulationPoint.producedVolume en el ultimo punto E_F",
+            assumption="Volumen producido acumulado hasta el último evento fuente-certificado E.",
+            source="SimulationPoint.producedVolume en el ultimo punto D_E",
             use="Cuantificar aporte de liquido de una corrida completa.",
-            certification="Derivado de ledger de produccion del solver A-F; no modifica ecuaciones.",
+            certification="Derivado del ledger de producción A-E; Stage 4.2 permanece bloqueado.",
         ),
         EngineeringMetric(
             name="cyclesPerDay",
@@ -555,13 +549,13 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
 
     domain = classify_design_domain(inputs, chain_certified=chain_certified)
     if domain.validation_level == "certified":
-        physical_scope = ("A_TO_F certified: B_TO_C santos_compatible, C_TO_D santos_corrected, "
-                          "D_TO_E santos_corrected and E_TO_F santos_corrected are connected with "
-                          "identity state transfer, accumulated ledgers and independent gas/liquid balances.")
+        physical_scope = (
+            "SOURCE_CERTIFIED_A_TO_F: all Stage 4.2 source-equation and identity gates passed."
+        )
         model_limitations = [
             "Certified only for the exact Santos frontend/API reference input set.",
             "Liao Table 5.14 remains a partial benchmark, not a quantitative validation target for this case.",
-            "E_TO_F entrainment remains represented by the audited Santos no-mass-exchange stage-4 closure in this implementation.",
+            "Certification requires the exact seven-variable Santos Stage 4.2 contract.",
         ]
     elif domain.validation_level == "validated_range_candidate":
         physical_scope = (
@@ -584,9 +578,14 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
             "Result must be treated as exploratory until a sensitivity/validation block covers this region.",
         ]
     else:
-        physical_scope = "A_TO_F failed: corrected chain connected, but at least one certification gate remains open."
+        physical_scope = (
+            "NOT_SOURCE_CERTIFIED_A_TO_F: the terminal D_TO_E state cannot satisfy "
+            "Santos 4.1.83, 4.1.88 and 4.1.90 simultaneously without projection; "
+            "the published trajectory stops at E."
+        )
         model_limitations = [
             domain.statement,
+            "Stage 4.2 E->F and Stage 4.3 F->G are withheld from the public trajectory.",
             "Do not use this run for design decisions.",
         ]
 

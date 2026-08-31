@@ -10,15 +10,15 @@ def audit():
     return run_block6m5_audit(max_step_s=0.5)
 
 
-def test_corrected_a_to_f_chain_is_certified(audit):
-    assert audit.certified
-    assert audit.validation_level_candidate == "certified"
-    assert audit.terminal_event == "F_FILM_VELOCITY_ZERO"
-    assert audit.failed_contracts == ()
-    assert audit.max_residual_normalized < 1e-8
+def test_a_to_f_source_certification_is_blocked(audit):
+    assert not audit.certified
+    assert audit.validation_level_candidate == "provisional"
+    assert audit.terminal_event == "E_SLUG_BASE_REACHED_SURFACE"
+    assert audit.source_certification_status == "NOT_SOURCE_CERTIFIED_A_TO_F"
+    assert audit.failed_contracts == ("stage42_e_source_compatibility", "ef_certified")
 
 
-def test_events_are_ordered_a_to_f(audit):
+def test_milestone15_reference_events_remain_available_for_comparison(audit):
     assert list(audit.event_times_s) == [
         "A_INITIAL_STATE",
         "B_GAS_LIFT_VALVE_OPENS",
@@ -41,16 +41,17 @@ def test_balances_and_valves_close_in_certification(audit):
         "de_gas_balance",
         "de_liquid_balance",
         "de_glv_closed",
-        "ef_certified",
         "ef_gas_balance",
         "ef_liquid_balance",
         "ef_glv_closed",
-        "terminal_f_velocity",
+        "terminal_f_velocity_reference",
     ):
         assert by_name[name].status == "ok"
+    assert by_name["stage42_e_source_compatibility"].status == "fail"
+    assert by_name["ef_certified"].status == "fail"
 
 
-def test_api_f_time_matches_audit_with_api_resolution_and_documents_coarse_step_difference(audit):
+def test_api_stops_at_e_and_matches_source_qualified_event_time(audit):
     inputs = SimulationInputs(
         tubingDiameter=0.050673,
         valveDepth=1480.0,
@@ -69,12 +70,11 @@ def test_api_f_time_matches_audit_with_api_resolution_and_documents_coarse_step_
     api_resolution_audit = run_block6m5_audit(params, max_step_s=None)
     api_params_coarse_audit = run_block6m5_audit(params, max_step_s=0.5)
     assert result.points[-1].t == pytest.approx(
-        api_resolution_audit.event_times_s["F_FILM_VELOCITY_ZERO"],
+        api_resolution_audit.event_times_s["E_SLUG_BASE_REACHED_SURFACE"],
         abs=1e-9,
     )
-    coarse_f = api_params_coarse_audit.event_times_s["F_FILM_VELOCITY_ZERO"]
-    api_f = result.points[-1].t
-    assert abs(api_f - coarse_f) < 1e-6
-    internal_base_case_f = audit.event_times_s["F_FILM_VELOCITY_ZERO"]
-    assert abs(api_f - internal_base_case_f) == pytest.approx(0.2585271498665, rel=1e-6)
-    assert audit.certified and api_resolution_audit.certified and api_params_coarse_audit.certified
+    assert result.terminalEvent == "E_SLUG_BASE_REACHED_SURFACE"
+    assert result.points[-1].stage == "D_E"
+    assert not audit.certified
+    assert not api_resolution_audit.certified
+    assert not api_params_coarse_audit.certified

@@ -41,13 +41,50 @@ class StageEFResult:
     corrected_certified: bool = False
     rhs_mode: str = "legacy"
     reservoir_inflow_valid: bool = True
+    gas_pressure_at_liquid_top_pa: np.ndarray | None = None
+    liquid_height_m: np.ndarray | None = None
+    physical_lower_liquid_volume_m3: np.ndarray | None = None
+    surface_gas_velocity_m_s: np.ndarray | None = None
+    gas_momentum_condition_number: np.ndarray | None = None
+    source_certification_status: str = "NOT_SOURCE_CERTIFIED_A_TO_F"
+
+
+@dataclass(frozen=True)
+class Stage42InitialStateAudit:
+    liquid_height_m: float
+    pressure_t1_pa: float
+    pressure_t3_pa: float
+    gas_mass_kg: float
+    gas_density_from_inventory_kg_m3: float
+    gas_density_from_eos_kg_m3: float
+    eos_density_relative_residual: float
+    hydrostatic_residual_pa: float
+    gas_volume_required_by_eos_m3: float
+    maximum_geometric_gas_volume_m3: float
+    compatible: bool
+
+
+class Stage42InitialStateIncompatibility(ValueError):
+    """Raised when terminal D->E cannot initialize Santos stage 4.2 by identity."""
+
+    def __init__(self, audit: Stage42InitialStateAudit):
+        self.audit = audit
+        super().__init__(
+            "NOT_SOURCE_CERTIFIED_A_TO_F: terminal D->E violates the simultaneous "
+            "Stage 4.2 gas-inventory, 4.1.88 hydrostatic and 4.1.90 EOS closures "
+            f"(scaled density residual={audit.eos_density_relative_residual:.9g})"
+        )
 
 def simulate_stage_e_to_f(params: GLIParameters, *, stage_d_e: StageDEResult|None=None,
         closure: StageEFParameters|None=None, max_time_s=240., max_step_s=.05,
         rtol=1e-8, atol=1e-10, rhs_mode: str = "legacy"):
     de=stage_d_e or simulate_stage_d_to_e(params)
     if rhs_mode == "santos_corrected":
-        return _simulate_stage_e_to_f_santos_corrected(
+        return _simulate_stage_e_to_f_santos_stage42(
+            params, de, closure=closure, max_time_s=max_time_s, max_step_s=max_step_s, rtol=rtol, atol=atol
+        )
+    if rhs_mode == "milestone15_corrected":
+        return _simulate_stage_e_to_f_milestone15(
             params, de, closure=closure, max_time_s=max_time_s, max_step_s=max_step_s, rtol=rtol, atol=atol
         )
     if rhs_mode != "legacy":
@@ -116,15 +153,290 @@ def _film_thickness_from_volume(params: GLIParameters, film_volume_m3: float) ->
     return r - sqrt(max(r * r - area / pi, 0.0))
 
 
-def _simulate_stage_e_to_f_santos_corrected(params: GLIParameters, de: StageDEResult, *,
+def _stage_42_surface_density(params: GLIParameters) -> float:
+    gas = params.gas
+    return (
+        gas.gas_molar_mass_kg_mol * params.operating.surface_tubing_pressure_pa
+        / (gas.z_ts * gas.gas_constant_j_mol_k * gas.temp_ts_k)
+    )
+
+
+def _stage_42_k_t3(params: GLIParameters) -> float:
+    gas = params.gas
+    return gas.z_t3 * gas.gas_constant_j_mol_k * gas.temp_t3_k / gas.gas_molar_mass_kg_mol
+
+
+def audit_stage_42_initial_state(
+    params: GLIParameters,
+    de: StageDEResult,
+    *,
+    relative_tolerance: float = 1.0e-6,
+) -> Stage42InitialStateAudit:
+    """Audit the identity E map against 4.1.83, 4.1.88 and 4.1.90.
+
+    Santos states that the lower column starts accumulating after the GLV
+    closes.  Phase I is absent in the base example, hence h_l(E)=0 and 4.1.88
+    requires P_t3(E)=P_t1(E).  No state is projected to make the closures fit.
+    """
+
+    H = float(params.geometry.valve_depth_m)
+    r = float(params.geometry.tubing_diameter_m) / 2.0
+    y = _film_thickness_from_volume(params, float(de.film_volume_m3[-1]))
+    Ab = pi * (r - y) ** 2
+    h_l = 0.0
+    pt1 = float(de.p_tubing_pa[-1])
+    pt3 = pt1
+    gas_mass = float(de.bubble_mass_kg[-1])
+    gas_volume = Ab * (H - h_l)
+    rho_inventory = gas_mass / max(gas_volume, 1.0e-18)
+    rho_surface = _stage_42_surface_density(params)
+    k_t3 = _stage_42_k_t3(params)
+    rho_eos = 0.5 * (pt3 / k_t3 + rho_surface)
+    relative = abs(rho_inventory - rho_eos) / max(abs(rho_eos), 1.0e-18)
+    rho_l = initial_stage_1(params)["rho_l"]
+    hydrostatic = pt1 - pt3 - rho_l * GRAVITY_M_S2 * h_l
+    return Stage42InitialStateAudit(
+        liquid_height_m=h_l,
+        pressure_t1_pa=pt1,
+        pressure_t3_pa=pt3,
+        gas_mass_kg=gas_mass,
+        gas_density_from_inventory_kg_m3=rho_inventory,
+        gas_density_from_eos_kg_m3=rho_eos,
+        eos_density_relative_residual=relative,
+        hydrostatic_residual_pa=hydrostatic,
+        gas_volume_required_by_eos_m3=gas_mass / max(rho_eos, 1.0e-18),
+        maximum_geometric_gas_volume_m3=Ab * H,
+        compatible=bool(relative <= relative_tolerance and abs(hydrostatic) <= 1.0e-6),
+    )
+
+
+def santos_stage_42_derivatives(
+    params: GLIParameters,
+    state: np.ndarray,
+    *,
+    closure: StageEFParameters | None = None,
+) -> tuple[np.ndarray, dict[str, float | object]]:
+    """Evaluate the seven-variable Santos 4.2 differential system.
+
+    State order is ``[h_l, P_t1, P_t3, rho_g, v_f, v_g, y]``.  The local
+    4.1.83/4.1.84 derivative pair is solved as a scaled 2x2 linear system; the
+    returned condition number is a numerical diagnostic, not a tuned closure.
+    """
+
+    h_l, pt1, pt3, rho_g, vf, vg, y = map(float, state)
+    H = float(params.geometry.valve_depth_m)
+    D = float(params.geometry.tubing_diameter_m)
+    r = D / 2.0
+    At = tubing_area(D)
+    if not (0.0 <= h_l < H):
+        raise ValueError("Stage 4.2 h_l must remain in [0, z_v)")
+    if not (0.0 <= y < r):
+        raise ValueError("Stage 4.2 y must remain in [0, r)")
+    if min(pt1, pt3, rho_g) <= 0.0:
+        raise ValueError("Stage 4.2 pressures and gas density must be positive")
+
+    c = closure or default_stage_ef_parameters()
+    rho_l = float(initial_stage_1(params)["rho_l"])
+    mu_l = float(params.fluids.liquid_viscosity_pa_s)
+    fc = FrictionClosure(c.roughness)
+    Ab = pi * (r - y) ** 2
+    Af = max(At - Ab, 1.0e-18)
+    gas_length = H - h_l
+    gas_diameter = max(2.0 * (r - y), 1.0e-9)
+    fg, _ = friction_factor(
+        max(rho_g * abs(vg) * gas_diameter / 1.1e-5, 1.0e-9),
+        gas_diameter,
+        fc,
+    )
+    film_diameter = max(4.0 * Af / (2.0 * pi * r + 2.0 * pi * (r - y)), 1.0e-9)
+    ff, _ = friction_factor(
+        max(rho_l * abs(vf) * film_diameter / mu_l, 1.0e-9),
+        film_diameter,
+        fc,
+    )
+    rho_surface = _stage_42_surface_density(params)
+    vgs = 2.0 * vg
+    qres = reservoir_inflow_from_pt1(params, pt1, rho_l)
+
+    # 4.1.76 and 4.1.87.
+    dy = -vf * Af / (2.0 * pi * H * (r - y))
+    dh_l = (qres.rate_m3_s + 2.0 * pi * (r - y) * h_l * dy) / Ab
+
+    # 4.1.83 and 4.1.84, after substituting 4.1.90.  Row two is
+    # pressure-scaled before solving so the reported conditioning is useful.
+    drho_rhs = (
+        2.0 * rho_g * dy / (r - y)
+        + rho_g * dh_l / gas_length
+        - rho_surface * vgs / gas_length
+    )
+    k_t3 = _stage_42_k_t3(params)
+    a84 = 2.0 * k_t3 - (
+        fg * vg * vg * gas_length / (2.0 * D) + gas_length * GRAVITY_M_S2
+    )
+    b84 = -fg * rho_g * vg * gas_length / D
+    rhs84 = -(fg * rho_g * vg * vg / (2.0 * D) + rho_g * GRAVITY_M_S2) * dh_l
+    pressure_scale = max(abs(2.0 * k_t3), abs(a84), abs(b84), 1.0)
+    matrix = np.array([[1.0, 0.0], [a84 / pressure_scale, b84 / pressure_scale]], dtype=float)
+    rhs_pair = np.array([drho_rhs, rhs84 / pressure_scale], dtype=float)
+    condition = float(np.linalg.cond(matrix))
+    if not np.isfinite(condition) or condition > 1.0e12:
+        raise ValueError(f"Santos 4.1.83/4.1.84 derivative system is ill-conditioned: {condition}")
+    drho_g, dvg = np.linalg.solve(matrix, rhs_pair)
+
+    # 4.1.90 and 4.1.89.
+    dpt3 = 2.0 * k_t3 * drho_g
+    dpt1 = dpt3 + rho_l * GRAVITY_M_S2 * dh_l
+
+    # 4.1.80.  Its source form assumes the upward-film branch v_f >= 0,
+    # which is precisely the interval integrated before terminal F.
+    dvf = (
+        -GRAVITY_M_S2
+        - 2.0 * pi * (r - y) / Af
+        * (vf * dy - fg * rho_g * vg * vg * gas_length / (8.0 * rho_l * H))
+        - ff * vf * vf * pi * r / (4.0 * Af)
+        + (pt1 - params.operating.surface_tubing_pressure_pa) / (rho_l * H)
+    )
+    derivative = np.array([dh_l, dpt1, dpt3, drho_g, dvf, dvg, dy], dtype=float)
+    return derivative, {
+        "Ab": Ab,
+        "Af": Af,
+        "gas_length": gas_length,
+        "rho_surface": rho_surface,
+        "surface_gas_velocity": vgs,
+        "surface_gas_rate": rho_surface * vgs * Ab,
+        "q_res": qres,
+        "fg": fg,
+        "ff": ff,
+        "condition_number": condition,
+        "film_rate": vf * Af,
+        "gas_mass": rho_g * Ab * gas_length,
+        "film_volume": Af * H,
+        "lower_liquid_volume": Ab * h_l,
+    }
+
+
+def _simulate_stage_e_to_f_santos_stage42(params: GLIParameters, de: StageDEResult, *,
         closure: StageEFParameters|None=None, max_time_s=240., max_step_s=.05,
         rtol=1e-8, atol=1e-10):
-    """Parallel corrected E->F route.
+    """Integrate exact Santos Stage 4.2 or reject a non-identity E map."""
 
-    The corrected boundary map is identity-based for the states with memory
-    delivered by D->E santos_corrected: rho_g, m_g, P_t1, v_g, v_f, y and
-    film inventory.  It keeps cumulative liquid ledgers instead of restarting
-    production at zero.  The public API does not call this mode yet.
+    if not de.event_e_reached:
+        raise ValueError("E must be reached before E->F")
+    if bool(de.valve_open[-1]) or abs(float(de.gl_mass_rate_kg_s[-1])) > 1.0e-12:
+        raise ValueError("E->F Stage 4.2 requires GLV closed and latched")
+    if de.film_velocity_m_s is None:
+        raise ValueError("E->F Stage 4.2 requires D->E film-velocity memory")
+    initial_audit = audit_stage_42_initial_state(params, de)
+    if not initial_audit.compatible:
+        raise Stage42InitialStateIncompatibility(initial_audit)
+
+    H = float(params.geometry.valve_depth_m)
+    D = float(params.geometry.tubing_diameter_m)
+    r = D / 2.0
+    y0 = _film_thickness_from_volume(params, float(de.film_volume_m3[-1]))
+    physical0 = np.array([
+        initial_audit.liquid_height_m,
+        initial_audit.pressure_t1_pa,
+        initial_audit.pressure_t3_pa,
+        initial_audit.gas_density_from_inventory_kg_m3,
+        float(de.film_velocity_m_s[-1]),
+        float(de.v_b_m_s[-1]),
+        y0,
+    ], dtype=float)
+    produced0 = float(de.produced_volume_m3[-1])
+    fallback0 = float(de.fallback_volume_m3[-1])
+    if de.reservoir_accumulated_m3 is None:
+        raise ValueError("E->F Stage 4.2 requires the D->E reservoir provenance ledger")
+    reservoir0 = float(de.reservoir_accumulated_m3[-1])
+    state0 = np.concatenate((physical0, [produced0, fallback0, reservoir0, 0.0]))
+
+    def derivatives(state):
+        dphysical, algebraic = santos_stage_42_derivatives(params, state[:7], closure=closure)
+        ledgers = np.array([
+            algebraic["film_rate"],
+            0.0,
+            algebraic["q_res"].rate_m3_s,
+            algebraic["surface_gas_rate"],
+        ], dtype=float)
+        return np.concatenate((dphysical, ledgers)), algebraic
+
+    def rhs(_time_s, state):
+        return derivatives(state)[0]
+
+    def event_f(_time_s, state):
+        return state[4]
+
+    event_f.terminal = True
+    event_f.direction = -1.0
+    sol = solve_ivp(
+        rhs, (0.0, max_time_s), state0, events=event_f, dense_output=True,
+        max_step=max_step_s, rtol=rtol, atol=atol, method="Radau",
+    )
+    if not sol.success:
+        raise RuntimeError(f"E->F Stage 4.2 integration failed: {sol.message}")
+    reached = bool(sol.t_events[0].size)
+    end = float(sol.t_events[0][0]) if reached else float(sol.t[-1])
+    t = np.linspace(0.0, end, max(2, int(np.ceil(max(end, max_step_s) / max_step_s)) + 1))
+    states = sol.sol(t)
+    algebraics = [derivatives(states[:, i])[1] for i in range(t.size)]
+    arr = lambda name: np.asarray([item[name] for item in algebraics], dtype=float)
+    gas_mass = arr("gas_mass")
+    film = arr("film_volume")
+    lower = arr("lower_liquid_volume")
+    gas_balance = gas_mass + states[10]
+    liquid_balance = film + lower + states[7] + states[8] - states[9]
+    gas_error = float(np.max(np.abs(gas_balance - gas_balance[0])) / max(abs(gas_balance[0]), 1.0e-18))
+    liquid_error = float(np.max(np.abs(liquid_balance - liquid_balance[0])) / max(abs(liquid_balance[0]), 1.0e-18))
+    inflow_valid = bool(all(item["q_res"].physically_valid for item in algebraics))
+    descending = bool(reached and states.shape[1] >= 2 and states[4, -2] > states[4, -1] >= -1.0e-7)
+    certified = bool(
+        reached and descending and gas_error <= 1.0e-8 and liquid_error <= 1.0e-8
+        and inflow_valid and float(np.max(arr("condition_number"))) <= 1.0e12
+    )
+    return StageEFResult(
+        time_s=t,
+        gas_density_kg_m3=states[3],
+        tubing_pressure_pa=states[1],
+        gas_velocity_m_s=states[5],
+        film_thickness_m=states[6],
+        film_velocity_m_s=states[4],
+        gas_mass_kg=gas_mass,
+        surface_gas_rate_kg_s=arr("surface_gas_rate"),
+        interfacial_shear_pa=arr("fg") * states[3] * states[5] ** 2 / 8.0,
+        film_volume_m3=film,
+        produced_film_volume_m3=states[7],
+        entrained_volume_m3=np.zeros_like(t),
+        reservoir_accumulated_m3=states[9],
+        valve_open=np.zeros_like(t, dtype=bool),
+        event_f_reached=reached,
+        event_f_time_s=end,
+        gas_balance_relative_error=gas_error,
+        liquid_balance_relative_error=liquid_error,
+        initial_state_source=(
+            "Identity D->E terminal state; h_l(E)=0 from Santos Stage 4.2 onset; "
+            "P_t3(E)=P_t1(E) from 4.1.88"
+        ),
+        fallback_volume_m3=states[8],
+        corrected_certified=certified,
+        rhs_mode="santos_stage42",
+        reservoir_inflow_valid=inflow_valid,
+        gas_pressure_at_liquid_top_pa=states[2],
+        liquid_height_m=states[0],
+        physical_lower_liquid_volume_m3=lower,
+        surface_gas_velocity_m_s=arr("surface_gas_velocity"),
+        gas_momentum_condition_number=arr("condition_number"),
+        source_certification_status=("SOURCE_CERTIFIED_A_TO_F" if certified else "NOT_SOURCE_CERTIFIED_A_TO_F"),
+    )
+
+
+def _simulate_stage_e_to_f_milestone15(params: GLIParameters, de: StageDEResult, *,
+        closure: StageEFParameters|None=None, max_time_s=240., max_step_s=.05,
+        rtol=1e-8, atol=1e-10):
+    """Frozen Milestone-1.5 reference route; not source-certified Stage 4.2.
+
+    The historical boundary map is identity-based for the states with memory
+    delivered by D->E, but it omits h_l/P_t3 and uses the pre-1.6 momentum
+    approximation. It is retained only to reproduce the requested comparison.
     """
     if not de.event_e_reached:
         raise ValueError("E must be reached before E->F")
@@ -260,20 +572,11 @@ def _simulate_stage_e_to_f_santos_corrected(params: GLIParameters, de: StageDERe
         np.max(np.abs(liquid_inventory - liquid_inventory[0])) / max(abs(liquid_inventory[0]), 1.0)
     )
     descending = reached and (len(s[3]) < 2 or float(s[3][-2]) > float(s[3][-1]) >= -1e-7)
-    certified = bool(
-        reached
-        and descending
-        and gas_error <= 1e-8
-        and liquid_error <= 1e-8
-        and not bool(np.zeros_like(t, dtype=bool).any())
-        and abs(float(s[3][0]) - vf0) / max(abs(vf0), 1.0) <= 1e-12
-        and abs(float(s[1][0]) - vg0) / max(abs(vg0), 1.0) <= 1e-12
-    )
     return StageEFResult(
         t, rho, pt, s[1], s[2], s[3], s[0], md, tau, s[4], s[5],
         np.zeros_like(t), s[8],
         np.zeros_like(t, dtype=bool),
         reached, end, gas_error, liquid_error,
-        "Identity E map from D->E santos_corrected; rho_g, m_g, P_t1, v_g, v_f, y, film, fallback and produced ledgers transported without projection",
-        s[6], certified, "santos_corrected", inflow_valid
+        "Milestone 1.5 reference only: identity memory map but Stage 4.2 h_l/P_t3 and 4.1.84 are absent",
+        s[6], False, "milestone15_corrected", inflow_valid
     )

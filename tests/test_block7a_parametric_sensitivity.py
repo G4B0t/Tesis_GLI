@@ -11,11 +11,14 @@ def test_block7a_keeps_commercial_domain_uncertified():
     assert audit.commercial_domain_certified is False
     assert "No define todavía un dominio comercial validado" in audit.statement
     assert audit.results[0].scenario_id == "santos_reference"
-    assert audit.results[0].status == "certified_reference"
-    assert audit.results[0].failed_contracts == ()
+    assert audit.results[0].status == "failed"
+    assert audit.results[0].failed_contracts == (
+        "stage42_e_source_compatibility",
+        "ef_certified",
+    )
 
 
-def test_small_pressure_and_slug_perturbations_close_a_to_f_contracts():
+def test_sensitivity_stops_when_reference_source_gate_is_not_certified():
     scenarios = (
         SensitivityScenario(
             "injection_pressure_minus_5pct",
@@ -45,16 +48,11 @@ def test_small_pressure_and_slug_perturbations_close_a_to_f_contracts():
 
     audit = run_block7a_local_sensitivity(scenarios=scenarios, max_step_s=1.0)
 
-    assert audit.failed_scenarios == ()
-    assert set(audit.observed_stable_scenarios) == {s.scenario_id for s in scenarios}
-    assert audit.max_residual_normalized < 1e-8
-    for result in audit.results[1:]:
-        assert result.status == "local_stability_observed"
-        assert result.validation_level_candidate == "certified"
-        assert result.terminal_event == "F_FILM_VELOCITY_ZERO"
-        assert result.failed_contracts == ()
-        assert result.event_times_s["F_FILM_VELOCITY_ZERO"] > result.event_times_s["E_SLUG_BASE_REACHED_SURFACE"]
-        assert "no certificación comercial global" in result.interpretation
+    assert audit.failed_scenarios == ("santos_reference",)
+    assert audit.observed_stable_scenarios == ()
+    assert audit.max_residual_normalized == 1.0
+    assert len(audit.results) == 1
+    assert audit.results[0].terminal_event == "E_SLUG_BASE_REACHED_SURFACE"
 
 
 def test_single_axis_result_records_tested_value_and_relative_change():
@@ -71,5 +69,6 @@ def test_single_axis_result_records_tested_value_and_relative_change():
     assert result.base_value == 40.0
     assert result.tested_value == 42.0
     assert result.relative_change_percent == 5.0
-    assert result.status == "local_stability_observed"
-    assert result.max_residual_normalized < 1e-8
+    assert result.status == "failed"
+    assert result.validation_level_candidate == "provisional"
+    assert result.failed_contracts == ("stage42_e_source_compatibility", "ef_certified")

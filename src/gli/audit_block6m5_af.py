@@ -11,7 +11,7 @@ from .stage1_dynamic import simulate_stage_1
 from .stage_bc_common import simulate_stage_b_to_c_common
 from .stage_cd_common import common_to_stage_cd_result, simulate_stage_c_to_d_common
 from .stage_de_dynamic import simulate_stage_d_to_e
-from .stage_ef_dynamic import simulate_stage_e_to_f
+from .stage_ef_dynamic import audit_stage_42_initial_state, simulate_stage_e_to_f
 
 
 @dataclass(frozen=True)
@@ -34,6 +34,7 @@ class Block6M5Audit:
     max_residual_normalized: float
     failed_contracts: tuple[str, ...]
     residuals: tuple[ResidualAF, ...]
+    source_certification_status: str = "NOT_SOURCE_CERTIFIED_A_TO_F"
 
 
 def _add(residuals: list[ResidualAF], name: str, value: float, scale: float, tolerance: float, interpretation: str):
@@ -60,7 +61,10 @@ def run_corrected_a_to_f_chain(params=None, *, max_step_s: float | None = 0.2):
         de = simulate_stage_d_to_e(p, stage_c_d=cd, rhs_mode="santos_corrected")
     else:
         de = simulate_stage_d_to_e(p, stage_c_d=cd, rhs_mode="santos_corrected", max_step_s=max_step_s)
-    ef = simulate_stage_e_to_f(p, stage_d_e=de, rhs_mode="santos_corrected", max_step_s=0.01)
+    # Preserve the Milestone-1.5 trajectory only as a numerical comparison.
+    # The exact Stage-4.2 identity map is audited separately below and is the
+    # sole authority for source certification.
+    ef = simulate_stage_e_to_f(p, stage_d_e=de, rhs_mode="milestone15_corrected", max_step_s=0.01)
     return p, ab, bc, cd_common, cd, de, ef
 
 
@@ -98,16 +102,25 @@ def run_block6m5_audit(params=None, *, max_step_s: float | None = 0.5) -> Block6
          "Balance líquido acumulado hasta E.")
     _add(residuals, "de_glv_closed", float(np.max(de.valve_open.astype(float))), 1.0, 0.0,
          "La GLV debe permanecer cerrada en D->E corregido.")
-    _add(residuals, "ef_certified", 0.0 if ef.corrected_certified else 1.0, 1.0, 0.0,
-         "E->F santos_corrected debe certificar F.")
+    stage42_e = audit_stage_42_initial_state(_p, de)
+    _add(
+        residuals,
+        "stage42_e_source_compatibility",
+        0.0 if stage42_e.compatible else stage42_e.eos_density_relative_residual,
+        1.0,
+        1e-6,
+        "La identidad E debe satisfacer simultáneamente inventario, 4.1.88 y 4.1.90.",
+    )
+    _add(residuals, "ef_certified", 1.0, 1.0, 0.0,
+         "La trayectoria E->F de Milestone 1.5 es referencia, no Stage 4.2 certificada.")
     _add(residuals, "ef_gas_balance", float(ef.gas_balance_relative_error), 1.0, 1e-8,
          "Balance gas en E->F corregido.")
     _add(residuals, "ef_liquid_balance", float(ef.liquid_balance_relative_error), 1.0, 1e-8,
          "Balance líquido en E->F corregido.")
     _add(residuals, "ef_glv_closed", float(np.max(ef.valve_open.astype(float))), 1.0, 0.0,
          "La GLV no debe reabrir en E->F corregido.")
-    _add(residuals, "terminal_f_velocity", float(ef.film_velocity_m_s[-1]), max(abs(float(ef.film_velocity_m_s[0])), 1.0), 1e-8,
-         "El terminal F debe ocurrir en v_f=0.")
+    _add(residuals, "terminal_f_velocity_reference", float(ef.film_velocity_m_s[-1]), max(abs(float(ef.film_velocity_m_s[0])), 1.0), 1e-8,
+         "El F de Milestone 1.5 sigue disponible solo para comparación numérica.")
     failed = tuple(r.name for r in residuals if r.status != "ok")
     max_norm = max((r.normalized for r in residuals), default=0.0)
     certified = not failed
@@ -120,6 +133,7 @@ def run_block6m5_audit(params=None, *, max_step_s: float | None = 0.5) -> Block6
         max_residual_normalized=float(max_norm),
         failed_contracts=failed,
         residuals=tuple(residuals),
+        source_certification_status=("SOURCE_CERTIFIED_A_TO_F" if certified else "NOT_SOURCE_CERTIFIED_A_TO_F"),
     )
 
 

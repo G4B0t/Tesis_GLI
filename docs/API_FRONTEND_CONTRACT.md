@@ -1,158 +1,83 @@
-# API frontend contract — GLI A→F certificado
+# Contrato API–frontend — alcance fuente hasta E
 
-Estado congelado para consumo del frontend Vite.
+Estado vigente desde Milestone 1.6. No requiere cambios de código frontend,
+pero corrige la semántica científica publicada por el backend.
 
-- Backend base URL local: `http://localhost:8000`
-- Frontend Vite permitido por CORS: `http://localhost:5173`
-- Caso certificado: `caseId="santos-gli-50-70-80"`
-- Alcance físico público: `A_TO_F certified`
-- Evento terminal público: `F_FILM_VELOCITY_ZERO`
-- `validationLevel`: `certified`
+- Backend local: `http://localhost:8000`.
+- Frontend Vite permitido por CORS: `http://localhost:5173`.
+- Caso: `caseId="santos-gli-50-70-80"`.
+- Estado físico: `NOT_SOURCE_CERTIFIED_A_TO_F`.
+- Evento terminal publicado: `E_SLUG_BASE_REACHED_SURFACE`.
+- `validationLevel`: `failed` en una simulación; `provisional` en el endpoint
+  estático de alcance.
 
-No se deben comparar cuantitativamente resultados del caso Santos con el benchmark parcial de Liao Table 5.14.
+La causa es la incompatibilidad del estado gaseoso terminal D→E con Santos
+4.1.83/.88/.90. El backend no publica puntos E→F construidos mediante
+proyección.
 
-## Endpoints obligatorios
+## Endpoints
 
-| Método | Ruta | Uso frontend |
+| Método | Ruta | Uso |
 |---|---|---|
-| `GET` | `/api/health` | Verificar conexión backend. |
-| `GET` | `/api/physical-scope` | Mostrar alcance físico, stages certificados, eventos y limitaciones. |
-| `GET` | `/api/reference-cases` | Listar casos disponibles y clasificación de referencia. |
-| `POST` | `/api/simulations` | Ejecutar y persistir simulación A→F certificada. |
-| `GET` | `/api/simulations/{id}` | Recuperar una simulación persistida. |
-| `GET` | `/api/simulations/{id}/timeline?interval_s=2.0` | Recuperar timeline nativo + serie remuestreada. |
+| `GET` | `/api/health` | Conectividad. |
+| `GET` | `/api/physical-scope` | Alcance, evento terminal y limitaciones. |
+| `GET` | `/api/reference-cases` | Casos y clasificación bibliográfica. |
+| `POST` | `/api/simulations` | Ejecutar y persistir la trayectoria fuente hasta E. |
+| `GET` | `/api/simulations/{id}` | Recuperar simulación. |
+| `GET` | `/api/simulations/{id}/timeline?interval_s=2.0` | Timeline A→E. |
 
-Los endpoints antiguos sin prefijo `/api` se mantienen como alias de compatibilidad, pero el frontend debe consumir las rutas `/api/...`.
+Los alias sin `/api` permanecen por compatibilidad.
 
-## Payload mínimo para `POST /api/simulations`
-
-```json
-{
-  "tubingDiameter": 0.050673,
-  "valveDepth": 1480.0,
-  "slugLength": 412.5,
-  "surfaceTubingPressure": 0.788,
-  "injectionPressure": 6.966,
-  "api": 40.0,
-  "bsw": 50.0,
-  "gasRelativeDensity": 0.7,
-  "casingPressureOpenRatio": 0.7,
-  "projectName": "Santos A-F Certified",
-  "projectistName": "Frontend"
-}
-```
-
-Campos opcionales relevantes:
-
-- `caseId`: por defecto `santos-gli-50-70-80`.
-- `waterRelativeDensity`: por defecto `1.07`.
-- `surfaceTemperature`: por defecto `80.0` °F.
-- `injectedGasReferenceRatio`: por defecto `0.8`.
-- `tubingRoughness`, `roughnessSource`, `glvMode`, `glvOpeningPressure`, `glvClosingPressure`, `glvParameterSource`: parámetros explícitos de cierre/documentación.
-
-## Respuesta de simulación
-
-Archivo fixture real:
-
-- `docs/api/examples/santos_a_f_certified_response.json`
-
-Campos de alto nivel garantizados:
+## Respuesta vigente
 
 ```json
 {
-  "simulationId": 1,
-  "validationLevel": "certified",
-  "terminalEvent": "F_FILM_VELOCITY_ZERO",
+  "validationLevel": "failed",
+  "terminalEvent": "E_SLUG_BASE_REACHED_SURFACE",
   "caseId": "santos-gli-50-70-80",
-  "referenceClassification": "full_case",
-  "physicalScope": "A_TO_F certified: ...",
-  "metrics": {
-    "duration": 527.5042526566479
-  },
+  "physicalScope": "NOT_SOURCE_CERTIFIED_A_TO_F: ...",
   "points": []
 }
 ```
 
-`points` es una serie nativa adaptativa concatenada por etapas. El último punto debe cumplir:
+El último punto cumple `stage="D_E"` y `t=metrics.duration`.
 
-- `stage = "E_F"`
-- `t = metrics.duration`
-- `abs(slugVelocity) < 1e-6`
-- `terminalEvent = "F_FILM_VELOCITY_ZERO"` en el objeto de simulación.
-
-## Stages y eventos
-
-Stages públicos, en orden:
+Stages publicados:
 
 1. `A_B`
 2. `B_C`
 3. `C_D`
 4. `D_E`
-5. `E_F`
 
-Eventos públicos, en orden:
+Eventos publicados:
 
 1. `A_INITIAL_STATE`
 2. `B_GAS_LIFT_VALVE_OPENS`
 3. `C_MOTOR_VALVE_CLOSES`
 4. `D_SLUG_TOP_REACHED_SURFACE`
 5. `E_SLUG_BASE_REACHED_SURFACE`
-6. `F_FILM_VELOCITY_ZERO`
 
-## Timeline
-
-`GET /api/simulations/{id}/timeline?interval_s=2.0` retorna:
-
-- `nativeSamples`: puntos nativos de la simulación.
-- `events`: eventos exactos A→F.
-- `segments`: rangos contiguos por stage.
-- `resampledSeries`: serie remuestreada para animación web.
-- `resampleInterval`: intervalo usado.
-- `adaptiveSolverOutputAvailable`: actualmente `false`.
-
-El último elemento de `resampledSeries` debe tener:
+El último elemento de la serie remuestreada tiene:
 
 ```json
 {
-  "stage": "E_F",
-  "exactEvent": "F_FILM_VELOCITY_ZERO"
+  "stage": "D_E",
+  "exactEvent": "E_SLUG_BASE_REACHED_SURFACE"
 }
 ```
 
-## Magnitudes por punto
+## Fixture histórico
 
-Cada `SimulationPoint` expone, según etapa:
+`docs/api/examples/santos_a_f_certified_response.json` queda congelado como
+snapshot de Milestone 1.5 para detectar cambios numéricos y construir la tabla
+comparativa. Ya no representa la respuesta vigente ni una certificación de
+fuente. No debe usarse como contrato actual del frontend.
 
-- `t`: tiempo absoluto [s].
-- `pressure`: presión principal [MPa].
-- `force`: fuerza diagnóstica [N].
-- `gasRate`: caudal de gas de etapa.
-- `stage`: `A_B`, `B_C`, `C_D`, `D_E` o `E_F`.
-- `annulusPressure`, `bubblePressure`, `bottomPressure`: presiones [MPa].
-- `slugTop`, `slugBase`: posiciones [m].
-- `filmThickness`: espesor de película [m].
-- `bubbleVelocity`, `slugVelocity`: velocidades [m/s].
-- `fallbackVolume`, `producedVolume`, `slugVolume`, `filmVolume`: volúmenes [m³].
-- `liquidRate`: caudal líquido [m³/s].
-- `gasLiftValveOpen`: estado GLV.
+## Limitaciones
 
-Los campos que no aplican a una etapa pueden ser `null`.
-
-## Alcance físico y limitaciones
-
-`GET /api/physical-scope` es la fuente frontend para texto de alcance. El bloque certificado declara:
-
-- B→C: `santos_compatible`.
-- C→D: `santos_corrected`.
-- D→E: `santos_corrected`.
-- E→F: `santos_corrected`.
-- Transferencias de estado por identidad.
-- Ledgers acumulados de producido/fallback.
-- Balances independientes gas/líquido cerrados bajo tolerancia.
-
-Limitaciones visibles:
-
-- Certificado solo para `caseId="santos-gli-50-70-80"` y el set actual de cierres explícitos Santos/Churchill.
-- Liao Table 5.14 permanece como benchmark parcial.
-- En E→F, entrainment queda representado por el cierre auditado de no intercambio de masa de etapa 4.
-
+- B→C, C→D y D→E conservan sus gates numéricos previos.
+- Stage 4.2 tiene RHS exacto y pruebas de residuos, pero el caso base no puede
+  inicializarlo por identidad.
+- F→G requiere `h_l(F)`, `P_t1(F)`, `P_t3(F)`, densidad media, masa gaseosa y
+  `V_lower(F)` explícitos; no reconstruye espacio desde ledgers.
+- No se implementó G→H ni se modificó el frontend.

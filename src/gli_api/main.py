@@ -43,24 +43,22 @@ app.add_middleware(
 
 
 CERTIFIED_SCOPE = (
-    "A_TO_F certified: B_TO_C santos_compatible, C_TO_D santos_corrected, "
-    "D_TO_E santos_corrected and E_TO_F santos_corrected are connected with "
-    "identity state transfer, accumulated ledgers and independent gas/liquid balances."
+    "NOT_SOURCE_CERTIFIED_A_TO_F: terminal D_TO_E cannot initialize Santos "
+    "Stage 4.2 while preserving gas mass, P_t1, 4.1.88 and 4.1.90."
 )
-TERMINAL_EVENT = "F_FILM_VELOCITY_ZERO"
-CERTIFIED_STAGES = ["A_B", "B_C", "C_D", "D_E", "E_F"]
+TERMINAL_EVENT = "E_SLUG_BASE_REACHED_SURFACE"
+CERTIFIED_STAGES = ["A_B", "B_C", "C_D", "D_E"]
 EVENT_ORDER = [
     "A_INITIAL_STATE",
     "B_GAS_LIFT_VALVE_OPENS",
     "C_MOTOR_VALVE_CLOSES",
     "D_SLUG_TOP_REACHED_SURFACE",
     "E_SLUG_BASE_REACHED_SURFACE",
-    "F_FILM_VELOCITY_ZERO",
 ]
 MODEL_LIMITATIONS = [
-    "Certified only for caseId santos-gli-50-70-80 and current explicit Santos/Churchill closure set.",
+    "The public trajectory stops at E; E->F and F->G are not source-certified.",
     "Liao Table 5.14 remains a partial benchmark, not a quantitative validation target for this case.",
-    "E_TO_F entrainment remains represented by the audited Santos no-mass-exchange stage-4 closure in this implementation.",
+    "Resolving the D->E spatial gas state is required before Stage 4.2 can start by identity.",
 ]
 
 
@@ -78,7 +76,7 @@ def physical_scope() -> PhysicalScopeResponse:
     return PhysicalScopeResponse(
         physicalScope=CERTIFIED_SCOPE,
         terminalEvent=TERMINAL_EVENT,
-        validationLevel="certified",
+        validationLevel="provisional",
         certifiedStages=CERTIFIED_STAGES,
         eventOrder=EVENT_ORDER,
         modelLimitations=MODEL_LIMITATIONS,
@@ -179,7 +177,7 @@ def stored_to_result(stored: StoredSimulation) -> SimulationResult:
         terminalEvent=TERMINAL_EVENT,
         caseId=stored.inputs.caseId,
         referenceClassification=REFERENCE_CASES[stored.inputs.caseId].classification,
-        validationLevel="certified",
+        validationLevel="provisional",
         modelLimitations=MODEL_LIMITATIONS,
     )
 

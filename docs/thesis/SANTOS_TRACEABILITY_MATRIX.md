@@ -25,8 +25,8 @@ En el ejemplo de Santos, la fase 4.1 de descompresión no aparece porque la GLV 
 | B→C, elevación con inyección | Tabla 5.1: 4.1.6, .9, .17–.19, .26, .28, .32, .35, .40, .46, .48, .50 | presiones, densidades, posiciones/velocidades de tapón y burbuja, película, caudal GLV | `stage_bc_common.py` modo Santos | IMPLEMENTADO |
 | C→D, elevación tras cierre motor | mismo sistema de etapa 2; cierre GLV como evento interno | estado canónico de 14 componentes; enclavamiento GLV; balances gas/líquido | `stage_cd_common.py` corregido | IMPLEMENTADO |
 | D→E, producción | etapa 3; 4.1.53 sustituye relación de elevación correspondiente | salida de tapón, gas y película; volumen producido | `stage_de_dynamic.py` corregido | IMPLEMENTADO |
-| E→F, descompresión fase II | Tabla 5.1: 4.1.76, .80, .83, .84, .87, .89, .90 | expansión/descarga de gas, película aún ascendente, columna inferior, evento `v_f=0` | `stage_ef_dynamic.py` corregido | IMPLEMENTADO |
-| F→G, descompresión fase III | 4.1.89, .94, .97, .107, .108; cierres .24–.25 y .95–.103 | película descendente, gas central, columna inferior, IPR dinámica; evento de equilibrio de momento | `stage_fg_dynamic.py`, `audit_stage_fg.py`, `audit_milestone15.py` | IMPLEMENTADO — NOT_READY_FOR_GH |
+| E→F, descompresión fase II | Tabla 5.1: 4.1.76, .80, .83, .84, .87, .89, .90 | sistema exacto de siete variables, `V_g=A_B(z_v-h_l)`, evento `v_f=0` | `stage_ef_dynamic.py`, `STAGE_EF_SANTOS_EQUATION_CONTRACT.md` | IMPLEMENTADO; BLOQUEADO EN E POR INCOMPATIBILIDAD D→E/4.1.90 |
+| F→G, descompresión fase III | 4.1.89, .94, .97, .107, .108; cierres .24–.25 y .95–.103 | entrada F por identidad física; sin ledger→altura ni media→fondo; evento de equilibrio de momento | `stage_fg_dynamic.py`, `audit_stage_fg.py` | NO EJECUTADO EN CASO BASE — NOT_READY_FOR_GH |
 | G→H, alimentación | 4.1.94, .107, .109, con .95 y cierres geométricos/EOS | película descendente y líquido de formación alimentan columna; presión hidrostática; evento longitud inicial | no hay módulo ni evento terminal H integrado | FALTANTE |
 
 ## 3. Contrato implementado F→G
@@ -49,6 +49,12 @@ Condiciones iniciales en F: se transfieren por identidad masa de gas, `y`, pelí
 Evento terminal G implementado: `P_t3−P_ts−ρ_g g(z_v−h_l)=0`, dirección `−1`. `P_t1−P_to,initial=0` se registra como diagnóstico no terminal. G no se etiqueta como ciclo completo.
 
 Resultado Milestone 1.5: `t_F=534.028521 s`; la raíz legacy ocurre `101.846418 s` después de F, pero el residual corregido no cruza cero hasta el horizonte ampliado de 10,000 s. En ese horizonte conserva balances (`2.59e-12` gas, `1.14e-13` líquido), pero la IPR presenta flujo inverso inválido al inicio de FG. Dictamen: `NOT_READY_FOR_GH`.
+
+Resultado Milestone 1.6: el RHS fuente de Stage 4.2 y sus residuos independientes
+están implementados, pero el E heredado exige `rho_g=40.3394 kg/m3` por masa y
+`23.3774 kg/m3` por 4.1.88/4.1.90. Residuo relativo `0.7255765`. No se proyecta
+el estado, no se fabrica F y no se ejecuta F→G. Estado A→F:
+`NOT_SOURCE_CERTIFIED_A_TO_F`; dictamen global: `NOT_READY_FOR_GH`.
 
 ## 4. Contrato mínimo G→H
 
