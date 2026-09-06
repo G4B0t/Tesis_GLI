@@ -42,9 +42,12 @@ ledgers de procedencia integrados en paralelo.
 
 Santos indica que, desde el cierre de la GLV, el fluido de formación empieza a
 acumularse en la columna de producción y que el filme no se incorpora a esa
-columna (página impresa 52). Como en el ejemplo base no existe la fase I y E es
-simultáneo, a la resolución del modelo, con ese cierre, la condición conservadora
-es `h_l(E)=0`. Por 4.1.88, `P_t3(E)=P_t1(E)`.
+columna (página impresa 52). La ausencia de fase I NO demuestra simultaneidad
+ni prescribe universalmente `h_l(E)=0`. En M1.6 se utilizó ese límite histórico;
+M1.7 exige una altura y `P_t3` explícitos, con procedencia de la transición.
+Si el cierre es materialmente anterior a E y falta esa transición, se bloquea
+sin asignar altura. Para cualquier altura admisible se conserva 4.1.88:
+`P_t1-P_t3=rho_l*g*h_l`, además de inventario, EOS y memoria por identidad.
 
 Las magnitudes con memoria `P_t1`, `m_g`, `v_g`, `v_f`, `y`, película y ledgers
 deben llegar por identidad desde el terminal D→E. La densidad media inicial

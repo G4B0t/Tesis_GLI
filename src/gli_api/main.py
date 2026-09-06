@@ -43,20 +43,20 @@ app.add_middleware(
 
 
 CERTIFIED_SCOPE = (
-    "NOT_SOURCE_CERTIFIED_A_TO_F: terminal D_TO_E cannot initialize Santos "
-    "Stage 4.2 while preserving gas mass, P_t1, 4.1.88 and 4.1.90."
+    "NOT_SOURCE_CERTIFIED_A_TO_E: Stage 3 can stop at a material pre-E GLV closure; "
+    "the source transition and upstream GLV correlation remain unresolved."
 )
-TERMINAL_EVENT = "E_SLUG_BASE_REACHED_SURFACE"
-CERTIFIED_STAGES = ["A_B", "B_C", "C_D", "D_E"]
+TERMINAL_EVENT = "GLV_CLOSE_BEFORE_E_SOURCE_BLOCK"
+CERTIFIED_STAGES = []
 EVENT_ORDER = [
     "A_INITIAL_STATE",
     "B_GAS_LIFT_VALVE_OPENS",
     "C_MOTOR_VALVE_CLOSES",
     "D_SLUG_TOP_REACHED_SURFACE",
-    "E_SLUG_BASE_REACHED_SURFACE",
+    "GLV_CLOSE_BEFORE_E_SOURCE_BLOCK",
 ]
 MODEL_LIMITATIONS = [
-    "The public trajectory stops at E; E->F and F->G are not source-certified.",
+    "E is not reached in the reconciled base run; F/G/H and daily cycle metrics are unavailable.",
     "Liao Table 5.14 remains a partial benchmark, not a quantitative validation target for this case.",
     "Resolving the D->E spatial gas state is required before Stage 4.2 can start by identity.",
 ]

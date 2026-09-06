@@ -1,0 +1,229 @@
+{
+  "status": "BLOCKED_BY_SOURCE",
+  "source_status": "NOT_SOURCE_CERTIFIED_A_TO_E",
+  "t_D_s": 509.84908981590047,
+  "identity_D_max_absolute_error": 0.0,
+  "canonical_D": [
+    675.4032811717163,
+    103.61500569280187,
+    50.3058066858003,
+    6177489.787843047,
+    2.6715037710482012,
+    0.7254215650621585,
+    0.0020761456463190397,
+    363.94334498782126,
+    1211.7750653269604,
+    1480.0,
+    2.365635867345106,
+    129.83698874745093,
+    0.0,
+    0.0
+  ],
+  "milestone16": {
+    "GLV_open_D": false,
+    "closure": "forced at D; not a mechanical event",
+    "t_E_s": 533.6292754136407,
+    "duration_DE_s": 23.78018559774026,
+    "E": {
+      "Pc1_pa": 5517345.628399925,
+      "Pc2_pa": 6209553.458750634,
+      "Pt1_pa": 4953631.024777312,
+      "casing_mass_kg": 675.4032811717163,
+      "gas_mass_kg": 103.61500569280187,
+      "rho_g_kg_m3": 40.33942802918484,
+      "v_g_m_s": 71.85092741803788,
+      "v_f_m_s": 57.55540731487726,
+      "y_m": 0.0018325602318680842,
+      "qres_m3_s": 0.00039149509115443947,
+      "produced_m3": 0.5161941737542372,
+      "film_m3": 0.4161495330058187,
+      "reservoir_ledger_m3": 0.007317920634344401
+    },
+    "stage42": {
+      "h_l_m": 0.0,
+      "basis": "historical limiting assumption only",
+      "Pt3_pa": 4953631.024777312,
+      "rho_inventory_kg_m3": 40.33942802918484,
+      "rho_EOS_kg_m3": 23.377362913293243,
+      "EOS_relative_residual": 0.7255764980337593,
+      "hydrostatic_residual_pa": 0.0,
+      "compatible": false
+    }
+  },
+  "milestone17": {
+    "GLV_open_D": true,
+    "GLV_rate_D_kg_s": 0.1973187136922346,
+    "t_GLV_close_s": 538.4139163274267,
+    "D_to_close_s": 28.564826511526203,
+    "t_E_s": null,
+    "duration_DE_s": null,
+    "close_to_E_s": null,
+    "E": null,
+    "GLV_at_E": null,
+    "stage42": null,
+    "terminal_reason": "SOURCE_AMBIGUITY_GLV_CLOSE_BEFORE_E",
+    "at_closure": {
+      "Pc1_pa": 5466664.457080083,
+      "Pc2_pa": 6152513.812540549,
+      "Pt1_pa": 6101918.456856015,
+      "casing_mass_kg": 669.1991693200222,
+      "gas_mass_kg": 109.81911754449602,
+      "rho_g_kg_m3": 49.69039866438949,
+      "v_g_m_s": 3.513101679293357,
+      "v_f_m_s": 1.4248115287221959,
+      "y_m": 0.0020640948223347847,
+      "qres_m3_s": 0.0002559710967505685,
+      "produced_m3": 0.15753791479331963,
+      "film_m3": 0.40941939631675583,
+      "reservoir_ledger_m3": 0.0071734654946416
+    },
+    "source_diagnostics": {
+      "terminal_reason": "SOURCE_AMBIGUITY_GLV_CLOSE_BEFORE_E",
+      "remaining_slug_length_m": 181.1079552273634,
+      "gas_inventory_relative_error": 8.896695402249393e-11,
+      "eos_relative_error": 3.3167350081034404e-15,
+      "transfer_casing_error_kg": 1.7497114868092467e-13,
+      "transfer_tubing_error_kg": 6.750155989720952e-14,
+      "glv_rate_at_d": 0.1973187136922346,
+      "source_glv_rate_at_d": 0.19781323322603148,
+      "glv_open_at_d": true,
+      "motor_valve_open": false,
+      "equation_numbers": [
+        6,
+        9,
+        17,
+        18,
+        19,
+        26,
+        28,
+        32,
+        35,
+        40,
+        48,
+        50,
+        53
+      ],
+      "closure_state": [
+        669.1991693200222,
+        109.81911754449602,
+        49.69039866438949,
+        6101918.456856015,
+        3.513101679293357,
+        1.4248115287221959,
+        0.0020640948223347847,
+        387.9397985420619,
+        1298.8920447726366,
+        1558.1163563848363,
+        3.1867069973403805,
+        129.83698874745093,
+        0.0,
+        0.15753791479331963,
+        4648751.998973446,
+        5466664.457080083,
+        6152513.812540549,
+        44.51726750486902,
+        50.10241718156669,
+        0.0071734654946416,
+        6.204111851694218
+      ],
+      "numerical_clearance_m": 1.48e-05
+    }
+  },
+  "balances": {
+    "gas_relative": 1.8242004013024489e-16,
+    "liquid_relative": 3.7933450920629467e-10,
+    "maximum_eq27_algebraic_drift_pa": 4042.507254228927,
+    "maximum_casing_eq6_inventory_offset_kg": 3.410605131648481e-13,
+    "inventory_relative": 8.896695402249393e-11,
+    "eos_relative": 3.3167350081034404e-15
+  },
+  "convergence": {
+    "scope": "D to GLV closure ONLY; E is unavailable",
+    "runs": [
+      {
+        "max_step_s": 1.0,
+        "t_E_s": null,
+        "closure_elapsed_s": 28.564826492983244,
+        "terminal_state": {
+          "Pc1_pa": 5466664.457102173,
+          "Pc2_pa": 6152513.812565415,
+          "Pt1_pa": 6101918.456797994,
+          "casing_mass_kg": 669.1991693227268,
+          "gas_mass_kg": 109.81911754179161,
+          "rho_g_kg_m3": 49.69039866391699,
+          "v_g_m_s": 3.5131016775396215,
+          "v_f_m_s": 1.4248115271601536,
+          "y_m": 0.0020640948223062286,
+          "qres_m3_s": 0.00025597109675741633,
+          "produced_m3": 0.1575379147699716,
+          "film_m3": 0.4094193963024169,
+          "reservoir_ledger_m3": 0.0071734654901061436
+        },
+        "remaining_slug_m": 181.10795524380455
+      },
+      {
+        "max_step_s": 0.5,
+        "t_E_s": null,
+        "closure_elapsed_s": 28.564826511526203,
+        "terminal_state": {
+          "Pc1_pa": 5466664.457080083,
+          "Pc2_pa": 6152513.812540549,
+          "Pt1_pa": 6101918.456856015,
+          "casing_mass_kg": 669.1991693200222,
+          "gas_mass_kg": 109.81911754449602,
+          "rho_g_kg_m3": 49.69039866438949,
+          "v_g_m_s": 3.513101679293357,
+          "v_f_m_s": 1.4248115287221959,
+          "y_m": 0.0020640948223347847,
+          "qres_m3_s": 0.0002559710967505685,
+          "produced_m3": 0.15753791479331963,
+          "film_m3": 0.40941939631675583,
+          "reservoir_ledger_m3": 0.0071734654946416
+        },
+        "remaining_slug_m": 181.1079552273634
+      },
+      {
+        "max_step_s": 0.25,
+        "t_E_s": null,
+        "closure_elapsed_s": 28.564826513660897,
+        "terminal_state": {
+          "Pc1_pa": 5466664.457077707,
+          "Pc2_pa": 6152513.812537876,
+          "Pt1_pa": 6101918.456862252,
+          "casing_mass_kg": 669.1991693197309,
+          "gas_mass_kg": 109.81911754478718,
+          "rho_g_kg_m3": 49.69039866444028,
+          "v_g_m_s": 3.513101679046299,
+          "v_f_m_s": 1.4248115285204836,
+          "y_m": 0.0020640948223386375,
+          "qres_m3_s": 0.0002559710967498324,
+          "produced_m3": 0.15753791479628035,
+          "film_m3": 0.40941939631841956,
+          "reservoir_ledger_m3": 0.007173465495166899
+        },
+        "remaining_slug_m": 181.10795522533226
+      }
+    ]
+  },
+  "reservoir": {
+    "valid": true,
+    "min_rate_m3_s": 0.0002470519634816105,
+    "max_rate_m3_s": 0.0002559710967505685
+  },
+  "peak_velocities_m_s": {
+    "old_gas": 71.85092741803788,
+    "new_gas": 3.513101679293357,
+    "old_film": 57.55540731487726,
+    "new_film": 1.4248115287221959,
+    "old_slug": 69.8577564985546,
+    "new_slug": 3.1867069973403805
+  },
+  "downstream": {
+    "EF_ran": false,
+    "FG_ran": false,
+    "G_reached": false,
+    "t_F_s": null,
+    "t_G_s": null
+  },
+  "warning": "HIGH_VELOCITY_PLAUSIBILITY_REVIEW_PENDING"
+}

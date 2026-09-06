@@ -57,7 +57,7 @@ class Block6M3Audit:
     glv_open_at_d: bool
     glv_open_any_de: bool
     glv_mass_rate_start_kg_s: float
-    corrected_event_e_time_s: float
+    corrected_event_e_time_s: float | None
     corrected_produced_volume_m3: float
     corrected_liquid_balance_error: float
     corrected_reservoir_residual_m3: float
@@ -204,12 +204,12 @@ def compatibility_residuals_d(params, cd_common, de_legacy) -> tuple[ResidualD, 
     )
     add(
         "glv_boundary",
-        "D->E: GLV no debe reabrir sin evento mecánico/histéresis compatible",
-        float(de_legacy.gl_mass_rate_kg_s[0]),
-        max(abs(float(de_legacy.gl_mass_rate_kg_s[0])), 1e-12),
-        "kg/s",
-        "fail" if bool(de_legacy.valve_open[0]) else "ok",
-        "El legado permite GLV abierta al inicio de D->E; debe enclavarse/cerrarse antes de certificar.",
+        "D->E: estado GLV heredado del terminal C->D",
+        float(de_legacy.valve_open[0] != cd_common.glv_open[-1]),
+        1.0,
+        "1",
+        "ok" if de_legacy.valve_open[0] == cd_common.glv_open[-1] else "fail",
+        "GLV abierta en D no es por sí misma un defecto; se exige identidad y cierre dinámico.",
     )
     add(
         "event_E",
@@ -256,9 +256,9 @@ def corrected_residuals_d(params, cd_common, de_corrected) -> tuple[ResidualD, .
     add("reservoir_balance", "I_liq(t) - [I_D + q_res t] = 0", float(np.max(np.abs(inventory - expected))), max(abs(expected[-1]), 1.0), "m3",
         "ok" if float(np.max(np.abs(inventory - expected))) <= 1e-8 else "fail",
         "El inventario total usa el volumen correcto en D más aporte de reservorio.")
-    add("glv_latched_closed", "m_glv(D->E) = 0", float(np.max(np.abs(de_corrected.gl_mass_rate_kg_s))), 1.0, "kg/s",
-        "ok" if not bool(de_corrected.valve_open.any()) and float(np.max(np.abs(de_corrected.gl_mass_rate_kg_s))) <= 1e-12 else "fail",
-        "La GLV queda cerrada/enclavada en la ruta corregida.")
+    add("glv_identity_D", "GLV(D+) = GLV(D-)", float(de_corrected.valve_open[0] != cd_common.glv_open[-1]), 1.0, "1",
+        "ok" if de_corrected.valve_open[0] == cd_common.glv_open[-1] else "fail",
+        "GLV hereda el control de D; su cierre posterior es dinámico.")
     add("event_E", "h_B(E)-H=0", float(de_corrected.h_b_m[-1] - params.geometry.valve_depth_m), params.geometry.valve_depth_m, "m",
         "ok" if de_corrected.event_e_reached else "fail",
         "El evento terminal E se detecta en la base de la golfada.")
@@ -305,7 +305,7 @@ def run_block6m3_audit(max_step_s: float = 0.5) -> Block6M3Audit:
         and corrected_max_norm < 1e-6
         and de_corrected.gas_balance_relative_error < 1e-6
         and de_corrected.liquid_balance_relative_error < 1e-8
-        and not bool(de_corrected.valve_open.any())
+        and de_corrected.source_certified
     )
     return Block6M3Audit(
         cd_common.event_d_time_s,

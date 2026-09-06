@@ -57,6 +57,12 @@ def run_stage_fg_audit(
     p, ab, bc, cd_common, _cd, de, _reference_ef = run_corrected_a_to_f_chain(
         params, max_step_s=af_max_step_s
     )
+    if not de.event_e_reached:
+        return StageFGAudit(False, "GLV_CLOSE_BEFORE_E_SOURCE_BLOCK" if de.glv_closure_time_s is not None else de.terminal_reason,
+            None,None,None,("physical_e_unavailable","physical_f_state_unavailable","stage_fg_not_run"),
+            None,None,HIGH_VELOCITY_WARNING,None,
+            "BLOCKED_BY_SOURCE" if "SOURCE_AMBIGUITY" in de.terminal_reason else "NOT_READY_FOR_GH",
+            de.terminal_reason)
     try:
         ef = simulate_stage_e_to_f(
             p, stage_d_e=de, rhs_mode="santos_corrected", max_step_s=0.01

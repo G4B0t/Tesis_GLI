@@ -13,8 +13,9 @@ def test_block7a_keeps_commercial_domain_uncertified():
     assert audit.results[0].scenario_id == "santos_reference"
     assert audit.results[0].status == "failed"
     assert audit.results[0].failed_contracts == (
-        "stage42_e_source_compatibility",
-        "ef_certified",
+        "de_event_e",
+        "de_source_certification",
+        "physical_f_state_unavailable",
     )
 
 
@@ -52,7 +53,7 @@ def test_sensitivity_stops_when_reference_source_gate_is_not_certified():
     assert audit.observed_stable_scenarios == ()
     assert audit.max_residual_normalized == 1.0
     assert len(audit.results) == 1
-    assert audit.results[0].terminal_event == "E_SLUG_BASE_REACHED_SURFACE"
+    assert audit.results[0].terminal_event == "GLV_CLOSE_BEFORE_E_SOURCE_BLOCK"
 
 
 def test_single_axis_result_records_tested_value_and_relative_change():
@@ -71,4 +72,4 @@ def test_single_axis_result_records_tested_value_and_relative_change():
     assert result.relative_change_percent == 5.0
     assert result.status == "failed"
     assert result.validation_level_candidate == "provisional"
-    assert result.failed_contracts == ("stage42_e_source_compatibility", "ef_certified")
+    assert result.failed_contracts == ("de_event_e", "de_source_certification", "physical_f_state_unavailable")

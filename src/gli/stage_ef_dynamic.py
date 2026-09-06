@@ -174,21 +174,30 @@ def audit_stage_42_initial_state(
 ) -> Stage42InitialStateAudit:
     """Audit the identity E map against 4.1.83, 4.1.88 and 4.1.90.
 
-    Santos states that the lower column starts accumulating after the GLV
-    closes.  Phase I is absent in the base example, hence h_l(E)=0 and 4.1.88
-    requires P_t3(E)=P_t1(E).  No state is projected to make the closures fit.
+    E and a source-derived lower column must exist before this audit runs.
+    Absence of Phase I alone does not prescribe a zero lower column.
     """
 
+    if not de.event_e_reached:
+        raise ValueError("Physical E is unavailable: " + de.terminal_reason)
+    if bool(de.valve_open[-1]):
+        raise ValueError("Stage 4.2 requires GLV closure; Phase I entry must be audited first")
+    if de.lower_liquid_height_m is None or not de.lower_liquid_height_source:
+        raise ValueError("Stage 4.2 requires a source-derived lower liquid height at E")
+    if de.gas_pressure_at_liquid_top_pa is None or de.film_thickness_m is None:
+        raise ValueError("Stage 4.2 requires explicit E pressure and film memory")
     H = float(params.geometry.valve_depth_m)
     r = float(params.geometry.tubing_diameter_m) / 2.0
-    y = _film_thickness_from_volume(params, float(de.film_volume_m3[-1]))
+    y = float(de.film_thickness_m[-1])
     Ab = pi * (r - y) ** 2
-    h_l = 0.0
+    h_l = float(de.lower_liquid_height_m[-1])
     pt1 = float(de.p_tubing_pa[-1])
-    pt3 = pt1
+    pt3 = float(de.gas_pressure_at_liquid_top_pa[-1])
     gas_mass = float(de.bubble_mass_kg[-1])
     gas_volume = Ab * (H - h_l)
-    rho_inventory = gas_mass / max(gas_volume, 1.0e-18)
+    if not (0 <= h_l < H and 0 < y < r and gas_mass > 0 and pt1 > 0 and pt3 > 0):
+        raise ValueError("Stage 4.2 E outside positive physical geometry/pressure domain")
+    rho_inventory = gas_mass / gas_volume
     rho_surface = _stage_42_surface_density(params)
     k_t3 = _stage_42_k_t3(params)
     rho_eos = 0.5 * (pt3 / k_t3 + rho_surface)
@@ -206,7 +215,13 @@ def audit_stage_42_initial_state(
         hydrostatic_residual_pa=hydrostatic,
         gas_volume_required_by_eos_m3=gas_mass / max(rho_eos, 1.0e-18),
         maximum_geometric_gas_volume_m3=Ab * H,
-        compatible=bool(relative <= relative_tolerance and abs(hydrostatic) <= 1.0e-6),
+        compatible=bool(0 <= h_l < H and relative <= relative_tolerance
+                        and abs(hydrostatic) <= 1.0e-6
+                        and de.gas_density_kg_m3 is not None
+                        and abs(float(de.gas_density_kg_m3[-1])-rho_inventory)
+                        <= relative_tolerance*max(abs(rho_inventory),1e-18)
+                        and abs(float(de.film_volume_m3[-1])-(tubing_area(2*r)-Ab)*H)
+                        <= relative_tolerance*max(abs(float(de.film_volume_m3[-1])),1e-18)),
     )
 
 
@@ -333,12 +348,12 @@ def _simulate_stage_e_to_f_santos_stage42(params: GLIParameters, de: StageDEResu
     H = float(params.geometry.valve_depth_m)
     D = float(params.geometry.tubing_diameter_m)
     r = D / 2.0
-    y0 = _film_thickness_from_volume(params, float(de.film_volume_m3[-1]))
+    y0 = float(de.film_thickness_m[-1])
     physical0 = np.array([
         initial_audit.liquid_height_m,
         initial_audit.pressure_t1_pa,
         initial_audit.pressure_t3_pa,
-        initial_audit.gas_density_from_inventory_kg_m3,
+        float(de.gas_density_kg_m3[-1]),
         float(de.film_velocity_m_s[-1]),
         float(de.v_b_m_s[-1]),
         y0,

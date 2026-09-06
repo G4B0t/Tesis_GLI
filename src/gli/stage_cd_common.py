@@ -33,7 +33,7 @@ def common_to_stage_cd_result(result,params):
         casing=state_from_mass(float(s[I_MC,i]),params);pc1[i]=casing['p_c1'];pc2[i]=casing['p_c2']
         pbot[i]=s[I_PG,i]+rho_l*GRAVITY_M_S2*max((params.geometry.perforation_depth_m or params.geometry.valve_depth_m)-params.geometry.valve_depth_m,0.)
         qfb[i]=_cd_terms(s[:,i],params,bool(result.glv_open[i]))[0][I_FB]
-    return StageCDResult(result.time_s,s[I_MC],s[I_MG],s[I_HB],s[I_HL],s[I_VG],s[I_VL],s[I_Y],s[I_MFILM]/rho_l,s[I_FB],qfb,pc1,pc2,s[I_PG],pbot,result.glv_mass_rate_kg_s,result.glv_force_n,result.glv_open,result.event_d_reached,result.event_d_time_s,result.gas_balance_relative_error,result.liquid_balance_relative_error)
+    return StageCDResult(result.time_s,s[I_MC],s[I_MG],s[I_HB],s[I_HL],s[I_VG],s[I_VL],s[I_Y],s[I_MFILM]/rho_l,s[I_FB],qfb,pc1,pc2,s[I_PG],pbot,result.glv_mass_rate_kg_s,result.glv_force_n,result.glv_open,result.event_d_reached,result.event_d_time_s,result.gas_balance_relative_error,result.liquid_balance_relative_error,s)
 
 def _cd_terms(state,params,glv_open,roughness_m=None,friction_scale=1.0):
     ini=initial_stage_1(params);g=params.gas;D=params.geometry.tubing_diameter_m;r=D/2;At=tubing_area(D)

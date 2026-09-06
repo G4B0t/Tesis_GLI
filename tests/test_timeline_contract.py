@@ -11,7 +11,8 @@ def timeline():
     return build_timeline(simulate(i),2.0)
 
 def test_canonical_events_and_order(timeline):
-    assert [e.eventId[0] for e in timeline.events]==list('ABCDE')
+    assert [e.eventId[0] for e in timeline.events[:-1]]==list('ABCD')
+    assert timeline.events[-1].eventId == 'GLV_CLOSE_BEFORE_E_SOURCE_BLOCK'
     assert all(b.t>a.t for a,b in zip(timeline.events,timeline.events[1:]))
     assert timeline.events[-1].terminal and timeline.events[-1].exact
 
@@ -22,7 +23,7 @@ def test_segments_are_contiguous_and_indexed(timeline):
 def test_resampling_is_monotonic_and_keeps_terminal_sample(timeline):
     t=[s.t for s in timeline.resampledSeries]
     assert all(b>a for a,b in zip(t,t[1:]))
-    assert timeline.resampledSeries[-1].exactEvent=='E_SLUG_BASE_REACHED_SURFACE'
+    assert timeline.resampledSeries[-1].exactEvent=='GLV_CLOSE_BEFORE_E_SOURCE_BLOCK'
     assert timeline.resampleInterval==2
 
 def test_contract_does_not_claim_unavailable_adaptive_output(timeline):

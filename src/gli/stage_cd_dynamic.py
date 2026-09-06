@@ -35,6 +35,7 @@ class StageCDResult:
     event_d_time_s: float
     gas_balance_relative_error: float
     liquid_balance_relative_error: float
+    canonical_states: np.ndarray | None = None
 
 def simulate_stage_c_to_d(params:GLIParameters,*,stage_b_c:StageBCResult|None=None,max_time_s:float=400.0,max_step_s:float=0.2,rtol:float=1e-7,atol:float=1e-9)->StageCDResult:
     """Continue the exact final C state until the slug top reaches surface D."""

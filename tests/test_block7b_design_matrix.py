@@ -60,6 +60,6 @@ def test_design_matrix_stops_when_reference_source_gate_fails():
     assert audit.max_residual_normalized == 1.0
     assert all(result.status == "failed" for result in audit.results)
     assert all(
-        result.failed_contracts == ("stage42_e_source_compatibility", "ef_certified")
+        result.failed_contracts == ("de_event_e", "de_source_certification", "physical_f_state_unavailable")
         for result in audit.results
     )

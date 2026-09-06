@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from math import pi
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -117,7 +118,15 @@ def test_stage42_uses_variable_gas_length_and_separate_lower_inventory():
 
 @pytest.fixture(scope="module")
 def incompatible_e():
-    params, *_prefix, de = build_corrected_e_state(max_step_s=0.5)
+    from gli.stage_de_dynamic import simulate_stage_d_to_e
+    params, *_prefix, cd, _blocked = build_corrected_e_state(max_step_s=0.5)
+    de = simulate_stage_d_to_e(params, stage_c_d=cd, rhs_mode="milestone16_reference", max_step_s=0.5)
+    # Historical M1.6 zero-column assumption, explicitly marked as reference.
+    radius = params.geometry.tubing_diameter_m/2
+    y = radius-np.sqrt(radius**2-de.film_volume_m3/(pi*params.geometry.valve_depth_m))
+    de = replace(de, lower_liquid_height_m=np.zeros_like(de.time_s),
+                 lower_liquid_height_source="M1.6 historical limiting assumption; not certified",
+                 film_thickness_m=y, gas_pressure_at_liquid_top_pa=de.p_tubing_pa.copy())
     return params, de, audit_stage_42_initial_state(params, de)
 
 

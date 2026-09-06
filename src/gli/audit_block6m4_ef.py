@@ -1,9 +1,8 @@
 """Block 6M-4A audit for the E->F decompression boundary.
 
 The audit keeps E->F disconnected from the public API.  It answers a narrow
-question: can the current E->F implementation consume the mathematically
-certified E state delivered by the parallel Santos-corrected D->E route without
-projection or hidden reconstruction?
+question: is physical E available, source-qualified, and compatible by identity?
+Historical reduced trajectories are never substituted for physical E or F.
 """
 from __future__ import annotations
 
@@ -37,7 +36,7 @@ class ResidualEF:
 
 @dataclass(frozen=True)
 class Block6M4Audit:
-    event_e_time_s: float
+    event_e_time_s: float | None
     event_f_time_s: float | None
     event_f_reached: bool
     can_receive_without_projection: bool
@@ -90,7 +89,7 @@ def _add_residual(
 
 
 def build_corrected_e_state(params=None, *, max_step_s: float = 0.2):
-    """Run the certified B->C, C->D and parallel corrected D->E chain."""
+    """Run the numerical prefix and Stage 3; the returned result may not reach E."""
     p = params or santos_50_70_80()
     stage_ab = simulate_stage_1(p, max_step_s=max_step_s)
     stage_bc = simulate_stage_b_to_c_common(
@@ -106,293 +105,48 @@ def build_corrected_e_state(params=None, *, max_step_s: float = 0.2):
 
 def audit_ef_boundary(params=None, *, max_step_s: float = 0.2) -> Block6M4Audit:
     p, _ab, _bc, _cd_common, _cd, de = build_corrected_e_state(params, max_step_s=max_step_s)
+    if not de.event_e_reached:
+        residual = ResidualEF("physical_e_unavailable", "E: h_B=z_v", float(p.geometry.valve_depth_m-de.h_b_m[-1]),
+                              p.geometry.valve_depth_m, float((p.geometry.valve_depth_m-de.h_b_m[-1])/p.geometry.valve_depth_m),
+                              "m", "fail", de.terminal_reason)
+        return Block6M4Audit(None,None,False,False,de.terminal_reason,
+                            residual.normalized,(residual.name,),(residual,),None,
+                            corrected_failed_contracts=(residual.name,),corrected_residuals=(residual,),
+                            corrected_max_residual_normalized=residual.normalized,
+                            corrected_initial_state_source="NOT_SOURCE_CERTIFIED_A_TO_E: " + de.terminal_reason)
     residuals: list[ResidualEF] = []
-    rho_l = initial_stage_1(p)["rho_l"]
-    tubing_area_m2 = tubing_area(p.geometry.tubing_diameter_m)
-    film_e = float(de.film_volume_m3[-1])
-    y_e = _film_thickness_from_volume(p, film_e)
-    gas_density_e = (
-        float(de.gas_density_kg_m3[-1])
-        if de.gas_density_kg_m3 is not None
-        else float("nan")
-    )
-    film_velocity_e = (
-        float(de.film_velocity_m_s[-1])
-        if de.film_velocity_m_s is not None
-        else float("nan")
-    )
-    radius = p.geometry.tubing_diameter_m / 2.0
-    gas_area_e = pi * (radius - y_e) ** 2
-    gas_velocity_scale = max(abs(float(de.v_b_m_s[-1])), 1.0)
-    produced_e = float(de.produced_volume_m3[-1])
-    fallback_e = float(de.fallback_volume_m3[-1])
-
-    ef = None
-    ef_exception: str | None = None
     try:
-        ef = simulate_stage_e_to_f(p, stage_d_e=de, max_step_s=max_step_s)
-    except Exception as exc:  # pragma: no cover - exercised only when audited model rejects E.
-        ef_exception = f"{type(exc).__name__}: {exc}"
-
-    if ef is None:
-        _add_residual(
-            residuals,
-            name="ef_accepts_state",
-            contract="simulate_stage_e_to_f(stage_d_e=D->E_santos_corrected) debe iniciar sin proyección",
-            value=1.0,
-            scale=1.0,
-            units="adim.",
-            tolerance=0.0,
-            status="fail",
-            interpretation=ef_exception or "E->F rechazó el estado E corregido.",
-        )
-        return Block6M4Audit(
-            event_e_time_s=float(de.event_e_time_s),
-            event_f_time_s=None,
-            event_f_reached=False,
-            can_receive_without_projection=False,
-            ef_exception=ef_exception,
-            max_residual_normalized=1.0,
-            failed_contracts=tuple(r.name for r in residuals if r.status != "ok"),
-            residuals=tuple(residuals),
-            ef_initial_state_source=None,
-        )
-
-    _add_residual(
-        residuals,
-        name="rho_g_continuity",
-        contract="rho_g(E+) - rho_g(E-) = 0",
-        value=float(ef.gas_density_kg_m3[0]) - gas_density_e,
-        scale=max(abs(gas_density_e), 1.0),
-        units="kg/m3",
-        tolerance=1e-8,
-        interpretation="La densidad de gas debe pasar de D->E corregido a E->F por identidad.",
-    )
-    _add_residual(
-        residuals,
-        name="m_g_continuity",
-        contract="m_g(E+) - m_g(E-) = 0",
-        value=float(ef.gas_mass_kg[0]) - float(de.bubble_mass_kg[-1]),
-        scale=max(abs(float(de.bubble_mass_kg[-1])), 1.0),
-        units="kg",
-        tolerance=1e-8,
-        interpretation="La masa de gas debe conservarse en la transición E.",
-    )
-    _add_residual(
-        residuals,
-        name="P_t1_continuity",
-        contract="P_t1(E+) - P_t1(E-) = 0",
-        value=float(ef.tubing_pressure_pa[0]) - float(de.p_tubing_pa[-1]),
-        scale=max(abs(float(de.p_tubing_pa[-1])), 1.0),
-        units="Pa",
-        tolerance=1e-8,
-        interpretation="La presión de tubing inicial de E->F debe ser la presión final de D->E.",
-    )
-    _add_residual(
-        residuals,
-        name="v_g_memory",
-        contract="v_g(E+) - v_g(E-) = 0 o transición documentada por Santos",
-        value=float(ef.gas_velocity_m_s[0]) - float(de.v_b_m_s[-1]),
-        scale=gas_velocity_scale,
-        units="m/s",
-        tolerance=1e-6,
-        interpretation=(
-            "El E->F vigente recalcula v_g desde descarga superficial; no transporta la "
-            "velocidad integrada hasta E."
-        ),
-    )
-    _add_residual(
-        residuals,
-        name="v_f_memory",
-        contract="v_f(E+) - v_f(E-) = 0",
-        value=float(ef.film_velocity_m_s[0]) - film_velocity_e,
-        scale=max(abs(film_velocity_e), 1.0),
-        units="m/s",
-        tolerance=1e-6,
-        interpretation=(
-            "El E->F vigente reconstruye v_f algebraicamente con dv_f/dt=0; eso es una "
-            "proyección respecto al estado con memoria entregado por D->E corregido."
-        ),
-    )
-    _add_residual(
-        residuals,
-        name="y_geometry_continuity",
-        contract="y(E+) - y(E-) = 0 por geometría de película",
-        value=float(ef.film_thickness_m[0]) - y_e,
-        scale=max(abs(y_e), 1e-6),
-        units="m",
-        tolerance=1e-8,
-        interpretation="El espesor inicial se infiere del volumen de película y debe coincidir.",
-    )
-    _add_residual(
-        residuals,
-        name="m_film_continuity",
-        contract="m_film(E+) - m_film(E-) = 0",
-        value=float(ef.film_volume_m3[0]) * rho_l - film_e * rho_l,
-        scale=max(abs(film_e * rho_l), 1.0),
-        units="kg",
-        tolerance=1e-8,
-        interpretation="La masa de película debe conservarse en la frontera E.",
-    )
-    _add_residual(
-        residuals,
-        name="fallback_ledger_continuity",
-        contract="fallback(E+) debe transportar fallback(E-) o documentar reinicio físico",
-        value=fallback_e,
-        scale=max(abs(fallback_e), 1.0),
-        units="m3",
-        tolerance=0.0,
-        status="fail",
-        interpretation=(
-            "StageEFResult no expone un ledger de fallback; por tanto el fallback acumulado "
-            "hasta E no puede continuar en E->F."
-        ),
-    )
-    _add_residual(
-        residuals,
-        name="produced_ledger_continuity",
-        contract="producido(E+) debe iniciar con el producido acumulado hasta E",
-        value=float(ef.produced_film_volume_m3[0]) - produced_e,
-        scale=max(abs(produced_e), 1.0),
-        units="m3",
-        tolerance=1e-8,
-        interpretation=(
-            "El E->F vigente inicia producido de etapa en cero; no conserva el ledger "
-            "acumulado A->E."
-        ),
-    )
-    _add_residual(
-        residuals,
-        name="glv_closed_no_reopen",
-        contract="GLV cerrada en E y sin reapertura durante E->F",
-        value=float(np.max(ef.valve_open.astype(float))),
-        scale=1.0,
-        units="booleano",
-        tolerance=0.0,
-        interpretation="La ruta E->F auditada mantiene la GLV cerrada.",
-    )
-    _add_residual(
-        residuals,
-        name="gas_inventory_balance",
-        contract="m_g + integral(m_dot_superficie) = constante",
-        value=float(ef.gas_balance_relative_error),
-        scale=1.0,
-        units="adim.",
-        tolerance=1e-6,
-        interpretation="Balance interno de gas reportado por el E->F vigente.",
-    )
-    liquid_e = film_e + produced_e + fallback_e
-    liquid_ef_initial = float(ef.film_volume_m3[0]) + float(ef.produced_film_volume_m3[0])
-    _add_residual(
-        residuals,
-        name="liquid_inventory_continuity",
-        contract="inventario líquido acumulado(E+) - inventario líquido acumulado(E-) = 0",
-        value=liquid_ef_initial - liquid_e,
-        scale=max(abs(liquid_e), 1.0),
-        units="m3",
-        tolerance=1e-8,
-        interpretation=(
-            "El balance líquido de E->F es local a la etapa y no conserva producido/fallback "
-            "acumulados hasta E."
-        ),
-    )
-    descending = False
-    if ef.event_f_reached and len(ef.film_velocity_m_s) >= 2:
-        descending = bool(ef.film_velocity_m_s[-2] > ef.film_velocity_m_s[-1] >= -1e-8)
-    _add_residual(
-        residuals,
-        name="event_f_descending",
-        contract="F: v_f = 0 con cruce descendente",
-        value=0.0 if ef.event_f_reached and descending else 1.0,
-        scale=1.0,
-        units="adim.",
-        tolerance=0.0,
-        interpretation="El evento terminal F debe ser cruce descendente de la velocidad de película.",
-    )
-    gas_volume_from_mg = float(de.bubble_mass_kg[-1]) / max(gas_density_e, 1e-18)
-    _add_residual(
-        residuals,
-        name="gas_geometry_eos_consistency",
-        contract="m_g/rho_g = A_g H en E",
-        value=gas_volume_from_mg - gas_area_e * p.geometry.valve_depth_m,
-        scale=max(abs(gas_area_e * p.geometry.valve_depth_m), 1e-12),
-        units="m3",
-        tolerance=1e-6,
-        interpretation="Consistencia geométrica/EOS del estado E recibido.",
-    )
-
+        entry = audit_stage_42_initial_state(p, de)
+    except ValueError as exc:
+        entry = None
+        reason = str(exc)
+    else:
+        reason = "Stage 4.2 identity closures or upstream source certification failed"
+    _add_residual(residuals, name="stage42_identity_E", contract="inventory + hydrostatic + EOS + memory",
+        value=0. if entry is not None and entry.compatible else 1., scale=1., units="1",
+        tolerance=0., interpretation=reason)
+    _add_residual(residuals, name="de_source_certification", contract="source-certified E required",
+        value=0. if de.source_certified else 1., scale=1., units="1",
+        tolerance=0., interpretation="An algebraically compatible state alone does not certify the upstream chain.")
+    ef = None
+    exception = None
+    if all(r.status == "ok" for r in residuals):
+        try:
+            ef = simulate_stage_e_to_f(p, stage_d_e=de, rhs_mode="santos_corrected", max_step_s=max_step_s)
+        except ValueError as exc:
+            exception = str(exc)
+    _add_residual(residuals, name="physical_f_state", contract="exact Stage 4.2 descending vf=0",
+        value=0. if ef is not None and ef.event_f_reached and ef.corrected_certified else 1.,
+        scale=1., units="1", tolerance=0., interpretation=exception or "No historical F is substituted.")
     failed = tuple(r.name for r in residuals if r.status != "ok")
-    max_norm = max((r.normalized for r in residuals), default=0.0)
-    can_receive = not failed and "recovered algebraically" not in ef.initial_state_source.lower()
-    corrected_residuals, corrected_meta = _audit_corrected_route(p, de, rho_l, y_e, gas_density_e, film_velocity_e)
-    return Block6M4Audit(
-        event_e_time_s=float(de.event_e_time_s),
-        event_f_time_s=float(ef.event_f_time_s) if ef.event_f_reached else None,
-        event_f_reached=bool(ef.event_f_reached),
-        can_receive_without_projection=bool(can_receive),
-        ef_exception=ef_exception,
-        max_residual_normalized=float(max_norm),
-        failed_contracts=failed,
-        residuals=tuple(residuals),
-        ef_initial_state_source=ef.initial_state_source,
-        corrected_event_f_time_s=corrected_meta["event_f_time_s"],
-        corrected_event_f_reached=corrected_meta["event_f_reached"],
-        corrected_certified=corrected_meta["corrected_certified"],
-        corrected_max_residual_normalized=max((r.normalized for r in corrected_residuals), default=0.0),
-        corrected_failed_contracts=tuple(r.name for r in corrected_residuals if r.status != "ok"),
-        corrected_residuals=tuple(corrected_residuals),
-        corrected_initial_state_source=corrected_meta["initial_state_source"],
-    )
-
-
-def _audit_corrected_route(p, de, rho_l, y_e, gas_density_e, film_velocity_e):
-    residuals: list[ResidualEF] = []
-    audit = audit_stage_42_initial_state(p, de)
-    _add_residual(
-        residuals, name="stage42_h_l_E", contract="h_l(E)=0 para el ejemplo sin fase I",
-        value=audit.liquid_height_m, scale=1.0, units="m", tolerance=0.0,
-        interpretation="Santos: la columna inferior empieza a formarse al cerrar la GLV."
-    )
-    _add_residual(
-        residuals, name="stage42_hydrostatic_E", contract="P_t1-P_t3-rho_l*g*h_l=0",
-        value=audit.hydrostatic_residual_pa, scale=max(abs(audit.pressure_t1_pa), 1.0),
-        units="Pa", tolerance=1e-10,
-        interpretation="4.1.88 fija P_t3(E)=P_t1(E) cuando h_l(E)=0."
-    )
-    _add_residual(
-        residuals, name="stage42_inventory_E", contract="rho_g=m_g/[A_B(z_v-h_l)]",
-        value=audit.gas_density_from_inventory_kg_m3 - gas_density_e,
-        scale=max(abs(gas_density_e), 1.0), units="kg/m3", tolerance=1e-8,
-        interpretation="La masa y geometría de D->E sí determinan la densidad de inventario por identidad."
-    )
-    _add_residual(
-        residuals, name="stage42_eos_E", contract="rho_g=0.5*(P_t3/K_t3+rho_gs)",
-        value=(audit.gas_density_from_inventory_kg_m3 - audit.gas_density_from_eos_kg_m3),
-        scale=max(abs(audit.gas_density_from_eos_kg_m3), 1.0), units="kg/m3", tolerance=1e-6,
-        interpretation=(
-            "El terminal D->E no satisface simultáneamente inventario, 4.1.88 y 4.1.90; "
-            "proyectarlo está prohibido."
-        )
-    )
-    volume_excess = max(
-        audit.gas_volume_required_by_eos_m3 - audit.maximum_geometric_gas_volume_m3,
-        0.0,
-    )
-    _add_residual(
-        residuals, name="stage42_eos_volume_domain",
-        contract="m_g/rho_g,EOS <= A_B*z_v",
-        value=volume_excess,
-        scale=max(audit.maximum_geometric_gas_volume_m3, 1e-12), units="m3", tolerance=1e-8,
-        interpretation="La EOS requeriría más volumen gaseoso que el máximo geométrico del tubing."
-    )
-    return residuals, {
-        "event_f_time_s": None,
-        "event_f_reached": False,
-        "corrected_certified": False,
-        "initial_state_source": (
-            "NOT_SOURCE_CERTIFIED_A_TO_F: identity E map blocked by 4.1.83/4.1.88/4.1.90 incompatibility"
-        ),
-    }
+    reached = bool(ef is not None and ef.event_f_reached)
+    ft = float(ef.event_f_time_s) if reached else None
+    source = ef.initial_state_source if ef is not None else None
+    maximum = max(r.normalized for r in residuals)
+    return Block6M4Audit(float(de.event_e_time_s), ft, reached,
+        entry is not None and entry.compatible, exception, maximum, failed,
+        tuple(residuals), source, ft, reached, not failed, maximum, failed,
+        tuple(residuals), source or reason)
 
 
 def audit_summary(params=None, *, max_step_s: float = 0.2) -> dict[str, Any]:

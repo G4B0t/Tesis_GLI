@@ -37,13 +37,23 @@ class StageDEResult:
     valve_force_n: np.ndarray
     valve_open: np.ndarray
     event_e_reached: bool
-    event_e_time_s: float
+    event_e_time_s: float | None
     gas_balance_relative_error: float
     liquid_balance_relative_error: float
     film_velocity_m_s: np.ndarray | None = None
     gas_density_kg_m3: np.ndarray | None = None
     reservoir_inflow_valid: bool = True
     reservoir_accumulated_m3: np.ndarray | None = None
+    canonical_states: np.ndarray | None = None
+    film_thickness_m: np.ndarray | None = None
+    glv_closure_time_s: float | None = None
+    integration_end_time_s: float | None = None
+    terminal_reason: str = "LEGACY_REFERENCE"
+    source_certified: bool = False
+    lower_liquid_height_m: np.ndarray | None = None
+    lower_liquid_height_source: str | None = None
+    gas_pressure_at_liquid_top_pa: np.ndarray | None = None
+    source_diagnostics: dict | None = None
 
 
 def simulate_stage_d_to_e(params: GLIParameters, *, stage_c_d: StageCDResult | None = None,
@@ -59,7 +69,11 @@ def simulate_stage_d_to_e(params: GLIParameters, *, stage_c_d: StageCDResult | N
     if not cd.event_d_reached:
         raise ValueError("Stage C->D must reach D")
     if rhs_mode == "santos_corrected":
-        return _simulate_stage_d_to_e_santos_corrected(
+        from .stage_de_santos import simulate_stage3
+        return simulate_stage3(params, cd, max_time_s=max_time_s,
+                               max_step_s=max_step_s, rtol=rtol, atol=atol)
+    if rhs_mode == "milestone16_reference":
+        return _simulate_stage_d_to_e_milestone16(
             params, cd, max_time_s=max_time_s, max_step_s=max_step_s,
             rtol=rtol, atol=atol)
     if rhs_mode != "legacy":
@@ -131,7 +145,7 @@ def simulate_stage_d_to_e(params: GLIParameters, *, stage_c_d: StageCDResult | N
                          arr(3), arr(4), reached, end, gas_error, liquid_error)
 
 
-def _simulate_stage_d_to_e_santos_corrected(
+def _simulate_stage_d_to_e_milestone16(
     params: GLIParameters,
     cd: StageCDResult,
     *,
@@ -140,7 +154,7 @@ def _simulate_stage_d_to_e_santos_corrected(
     rtol: float,
     atol: float,
 ) -> StageDEResult:
-    """Parallel Santos stage-3 D->E candidate.
+    """Historical Milestone 1.6 reference, NOT the scientific Stage-3 route.
 
     The legacy public contract is preserved.  This route carries the film
     velocity as memory, accumulates reservoir liquid in the film, closes the GLV

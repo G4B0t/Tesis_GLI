@@ -13,9 +13,9 @@ def audit():
 def test_a_to_f_source_certification_is_blocked(audit):
     assert not audit.certified
     assert audit.validation_level_candidate == "provisional"
-    assert audit.terminal_event == "E_SLUG_BASE_REACHED_SURFACE"
-    assert audit.source_certification_status == "NOT_SOURCE_CERTIFIED_A_TO_F"
-    assert audit.failed_contracts == ("stage42_e_source_compatibility", "ef_certified")
+    assert audit.terminal_event == "GLV_CLOSE_BEFORE_E_SOURCE_BLOCK"
+    assert audit.source_certification_status == "NOT_SOURCE_CERTIFIED_A_TO_E"
+    assert audit.failed_contracts == ("de_event_e", "de_source_certification", "physical_f_state_unavailable")
 
 
 def test_milestone15_reference_events_remain_available_for_comparison(audit):
@@ -24,8 +24,7 @@ def test_milestone15_reference_events_remain_available_for_comparison(audit):
         "B_GAS_LIFT_VALVE_OPENS",
         "C_MOTOR_VALVE_CLOSES",
         "D_SLUG_TOP_REACHED_SURFACE",
-        "E_SLUG_BASE_REACHED_SURFACE",
-        "F_FILM_VELOCITY_ZERO",
+        "GLV_CLOSE_BEFORE_E_SOURCE_BLOCK",
     ]
     times = list(audit.event_times_s.values())
     assert times[0] == 0.0
@@ -37,18 +36,12 @@ def test_balances_and_valves_close_in_certification(audit):
     for name in (
         "bc_certified",
         "cd_certified",
-        "de_event_e",
         "de_gas_balance",
         "de_liquid_balance",
-        "de_glv_closed",
-        "ef_gas_balance",
-        "ef_liquid_balance",
-        "ef_glv_closed",
-        "terminal_f_velocity_reference",
     ):
         assert by_name[name].status == "ok"
-    assert by_name["stage42_e_source_compatibility"].status == "fail"
-    assert by_name["ef_certified"].status == "fail"
+    for name in ("de_event_e", "de_source_certification", "physical_f_state_unavailable"):
+        assert by_name[name].status == "fail"
 
 
 def test_api_stops_at_e_and_matches_source_qualified_event_time(audit):
@@ -70,10 +63,10 @@ def test_api_stops_at_e_and_matches_source_qualified_event_time(audit):
     api_resolution_audit = run_block6m5_audit(params, max_step_s=None)
     api_params_coarse_audit = run_block6m5_audit(params, max_step_s=0.5)
     assert result.points[-1].t == pytest.approx(
-        api_resolution_audit.event_times_s["E_SLUG_BASE_REACHED_SURFACE"],
+        api_resolution_audit.event_times_s["GLV_CLOSE_BEFORE_E_SOURCE_BLOCK"],
         abs=1e-9,
     )
-    assert result.terminalEvent == "E_SLUG_BASE_REACHED_SURFACE"
+    assert result.terminalEvent == "GLV_CLOSE_BEFORE_E_SOURCE_BLOCK"
     assert result.points[-1].stage == "D_E"
     assert not audit.certified
     assert not api_resolution_audit.certified

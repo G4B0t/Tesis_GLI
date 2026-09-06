@@ -25,7 +25,7 @@ def build_timeline(result:SimulationResult,interval_s:float=1.0)->SimulationTime
         if i==0: events.append(EventRecord(eventId=ids[0],t=seg.startTime,stageAfter=seg.stage))
         if i+1<len(segments): events.append(EventRecord(eventId=ids[i+1],t=seg.endTime,
             stageBefore=seg.stage,stageAfter=segments[i+1].stage))
-    events.append(EventRecord(eventId=ids[len(segments)],t=segments[-1].endTime,
+    events.append(EventRecord(eventId=result.terminalEvent or "INTEGRATION_END",t=segments[-1].endTime,
         stageBefore=segments[-1].stage,terminal=True))
     event_by_t={round(e.t,9):e.eventId for e in events}
     for s in native: s.exactEvent=event_by_t.get(round(s.t,9))

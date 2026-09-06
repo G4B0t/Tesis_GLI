@@ -81,7 +81,25 @@ detectó incompatibilidad entre el inventario gaseoso D→E y 4.1.88/4.1.90
 Gate actualizado: reconstruir primero el estado gaseoso espacial terminal de
 D→E sin proyección ni ajuste de coeficientes.
 
-## Hito 2 — G→H, alimentación
+## Hito 1.7 — Stage 3 / GLV — ejecución hasta bloqueo de fuente
+
+Se conserva el vector canónico D, se elimina el cierre forzado en D y el piso
+de 5 m de la ruta científica. Los 13 residuos del sistema Stage 3 y sus balances
+se verifican en el tramo disponible. El cierre dinámico precede a E con
+181.108 m de golfada remanente. No se inventa el intervalo posterior ni `h_l(E)`.
+La correlación de GLV heredada no reproduce 4.1.13/.15: la cadena no se certifica.
+El gate exacto 4.2 se conserva y no se ejecutan E→F ni F→G para el caso base.
+Las métricas diarias de API son nulas hasta un ciclo A→H completo.
+
+Siguiente decisión dentro de la reconciliación pendiente: resolver con fuente
+la correlación GLV coherentemente antes/después de D, la interpretación del
+cierre materialmente pre-E y el tratamiento de fricción en .27/.28. No iniciar
+otro hito ni implementar G→H por superar únicamente pruebas de software.
+Ver `MILESTONE_1_7_REPORT.md` y `THESIS_WRITING_MAP.md`.
+
+## Hito 2 — especificación futura, no ejecutada
+
+**G→H BLOQUEADO: no autorizado ni implementado en Milestone 1.7.**
 
 ### Archivos exactos a crear
 

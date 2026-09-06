@@ -24,15 +24,15 @@ def test_a_to_g_audit_stops_before_unavailable_physical_f(audits):
 def test_a_to_g_audit_blocks_g_to_h_at_stage42_identity_gate(audits):
     _af, fg = audits
     assert not fg.ready_for_review
-    assert fg.status == "NOT_READY_FOR_GH"
-    assert fg.terminal_event == "E_SLUG_BASE_REACHED_SURFACE"
+    assert fg.status == "BLOCKED_BY_SOURCE"
+    assert fg.terminal_event == "GLV_CLOSE_BEFORE_E_SOURCE_BLOCK"
     assert fg.failed_contracts == (
-        "stage42_initial_state_incompatible",
+        "physical_e_unavailable",
         "physical_f_state_unavailable",
         "stage_fg_not_run",
     )
     assert fg.t_g_s is None
-    assert "NOT_SOURCE_CERTIFIED_A_TO_F" in fg.blocking_reason
+    assert "SOURCE_AMBIGUITY_GLV_CLOSE_BEFORE_E" in fg.blocking_reason
 
 
 def test_a_to_g_audit_reports_balances_and_existing_warning(audits):

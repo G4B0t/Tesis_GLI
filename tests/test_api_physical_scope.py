@@ -10,9 +10,9 @@ def test_api_declares_stage42_source_block_and_stops_at_e():
         casingPressureOpenRatio=0.7,projectName='QA',projectistName='QA',
     )
     result=simulate(inputs)
-    assert result.terminalEvent=='E_SLUG_BASE_REACHED_SURFACE'
-    assert result.physicalScope.startswith('NOT_SOURCE_CERTIFIED_A_TO_F:')
-    assert '4.1.90' in result.physicalScope
+    assert result.terminalEvent=='GLV_CLOSE_BEFORE_E_SOURCE_BLOCK'
+    assert result.physicalScope.startswith('NOT_SOURCE_CERTIFIED_A_TO_E:')
+    assert 'SOURCE_AMBIGUITY_GLV_CLOSE_BEFORE_E' in result.physicalScope
     assert result.validationLevel == 'failed'
     assert result.points[-1].stage=='D_E'
     assert result.points[-1].producedVolume>0.0

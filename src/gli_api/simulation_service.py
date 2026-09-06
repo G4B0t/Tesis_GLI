@@ -242,9 +242,9 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
         raise RuntimeError("Certified common C_TO_D segment required")
     dynamic_cd = common_to_stage_cd_result(dynamic_cd_common, params)
     dynamic_de = simulate_stage_d_to_e(params, stage_c_d=dynamic_cd, rhs_mode="santos_corrected")
-    dynamic_ef = simulate_stage_e_to_f(
-        params, stage_d_e=dynamic_de, rhs_mode="milestone15_corrected"
-    )
+    dynamic_ef = None
+    if dynamic_de.event_e_reached and dynamic_de.source_certified:
+        dynamic_ef = simulate_stage_e_to_f(params, stage_d_e=dynamic_de, rhs_mode="santos_corrected")
     if dynamic_de.film_velocity_m_s is None:
         raise RuntimeError("Certified D_TO_E segment must expose film velocity memory")
     chain_certified = (
@@ -253,7 +253,8 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
         and dynamic_de.event_e_reached
         and dynamic_de.gas_balance_relative_error <= 1e-8
         and dynamic_de.liquid_balance_relative_error <= 1e-8
-        and not bool(dynamic_de.valve_open.any())
+        and dynamic_de.source_certified
+        and dynamic_ef is not None
         and dynamic_ef.corrected_certified
         and dynamic_ef.gas_balance_relative_error <= 1e-8
         and dynamic_ef.liquid_balance_relative_error <= 1e-8
@@ -330,7 +331,8 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
             liquidRate=float(q),producedVolume=float(vp),gasLiftValveOpen=bool(is_open),
             gasInjectedVolume=final_gas_injected,filmVelocity=float(vf),
             motorValveRate=0.0,glvMassRate=float(mgl)))
-    offset_e=offset_d+dynamic_de.event_e_time_s
+    de_end = float(dynamic_de.integration_end_time_s if dynamic_de.integration_end_time_s is not None else dynamic_de.time_s[-1])
+    offset_e=offset_d+de_end
     annulus_e=float(dynamic_de.p_c1_pa[-1]*PA_TO_MPA)
     for t,pt,vg,vf,y,film,fb,prod,mdot,is_open in (zip(
         dynamic_ef.time_s[1:],dynamic_ef.tubing_pressure_pa[1:],
@@ -353,7 +355,7 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
             pTo=stage_1["p_to"] * PA_TO_MPA,
             pVo=stage_1["p_vo"] * PA_TO_MPA,
             pBt=stage_1["p_bt"] * PA_TO_MPA,
-            duration=dynamic.opening_time_s+dynamic_bc.event_c_time_s+dynamic_cd.event_d_time_s+dynamic_de.event_e_time_s,
+            duration=float(points[-1].t),
             vgRef=liao_reference_gas_volume_std_m3(params),
             vgiTarget=injected_gas_target_std_m3(params),
         )
@@ -366,7 +368,7 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
         StageDuration(stage="C_D", startTime=float(offset_c), endTime=float(offset_d),
                       duration=float(dynamic_cd.event_d_time_s)),
         StageDuration(stage="D_E", startTime=float(offset_d), endTime=float(offset_e),
-                      duration=float(dynamic_de.event_e_time_s)),
+                      duration=de_end),
     ]
     balance_errors = [
         BalanceError(
@@ -400,7 +402,7 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
             source="A_B trapezoidal integral of motor valve standard gas rate; B_C injected_volume_std_m3 state",
             formula="integral(q_motor_std dt)",
             stage="A_B/B_C",
-            certification="Derived from the certified gas injection state; no solver equation was changed.",
+            certification="Partial upstream numerical gas-injection ledger; not complete-cycle certification.",
         ),
         DiagnosticVariable(
             name="filmVelocity",
@@ -408,7 +410,7 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
             source="StageDEResult.film_velocity_m_s",
             formula="D->E film momentum/memory state",
             stage="D_E",
-            certification="Stage 4.2 is not exposed because its identity E map fails the source contract.",
+            certification="Stage 4.2 is withheld until physical E and its identity gate exist.",
         ),
         DiagnosticVariable(
             name="motorValveRate",
@@ -431,8 +433,8 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
             unit="s",
             source="event times from Stage1Result and StageBC/CD/DE results",
             formula="event_end_time - event_start_time",
-            stage="A_F",
-            certification="Durations stop at E; the former E->F reference is not source-certified.",
+            stage="A_E_PARTIAL",
+            certification="Elapsed partial trajectory to the reported terminal event, not a cycle duration.",
         ),
     ]
     film_velocities = [abs(point.filmVelocity) for point in points if point.filmVelocity is not None]
@@ -442,21 +444,22 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
     produced_liquid_per_cycle = float(final_point.producedVolume or 0.0)
     fallback_volume = float(final_point.fallbackVolume or 0.0)
     initial_slug_volume = pi * inputs.tubingDiameter**2 / 4.0 * inputs.slugLength
-    cycles_per_day = safe_divide(SECONDS_PER_DAY, duration) or 0.0
-    estimated_daily_liquid = produced_liquid_per_cycle * cycles_per_day
-    estimated_daily_injected_gas = final_gas_injected * cycles_per_day
+    # No H exists: an elapsed partial trajectory is not a cycle duration.
+    cycles_per_day = None
+    estimated_daily_liquid = None
+    estimated_daily_injected_gas = None
     fallback_denominator = produced_liquid_per_cycle + fallback_volume
     engineering_metrics = [
         EngineeringMetric(
             name="producedLiquidPerCycle",
-            label="Liquido producido por ciclo",
+            label="Liquido producido en el tramo simulado",
             value=produced_liquid_per_cycle,
-            unit="m3/ciclo",
+            unit="m3",
             formula="V_producido_final",
-            assumption="Volumen producido acumulado hasta el último evento fuente-certificado E.",
+            assumption="Ledger parcial; el evento H no está disponible.",
             source="SimulationPoint.producedVolume en el ultimo punto D_E",
-            use="Cuantificar aporte de liquido de una corrida completa.",
-            certification="Derivado del ledger de producción A-E; Stage 4.2 permanece bloqueado.",
+            use="Inspeccionar producción parcial; no representa un ciclo completo.",
+            certification="PARTIAL_TRAJECTORY_ONLY; clave histórica conservada por compatibilidad.",
         ),
         EngineeringMetric(
             name="cyclesPerDay",
@@ -536,6 +539,19 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
             certification="Metrica derivada geometrica; no agrega fisica nueva.",
         ),
     ]
+    for metric in engineering_metrics:
+        if metric.name in {"cyclesPerDay", "estimatedDailyLiquid", "estimatedDailyInjectedGas"}:
+            metric.assumption = "H no disponible: no existe duración de ciclo A→H."
+            metric.certification = "UNAVAILABLE_INCOMPLETE_CYCLE"
+            metric.use = "No disponible para recomendaciones ni comparación diaria."
+            metric.source = "No disponible: H no fue calculado."
+        elif metric.name == "injectedGasPerCycle":
+            metric.label = "Gas inyectado en el tramo simulado"
+            metric.unit = "std m3"
+            metric.certification = "PARTIAL_TRAJECTORY_ONLY; clave histórica conservada por compatibilidad."
+            metric.use = "Inspeccionar consumo acumulado del tramo parcial, no por ciclo."
+        else:
+            metric.certification = "PARTIAL_TRAJECTORY_ONLY; no constituye recomendación de diseño."
     diagnostics = SimulationDiagnostics(
         stageDurations=stage_durations,
         balanceErrors=balance_errors,
@@ -579,14 +595,15 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
         ]
     else:
         physical_scope = (
-            "NOT_SOURCE_CERTIFIED_A_TO_F: the terminal D_TO_E state cannot satisfy "
-            "Santos 4.1.83, 4.1.88 and 4.1.90 simultaneously without projection; "
-            "the published trajectory stops at E."
+            "NOT_SOURCE_CERTIFIED_A_TO_E: " + dynamic_de.terminal_reason
+            + "; E/F/G/H are not manufactured."
         )
         model_limitations = [
             domain.statement,
             "Stage 4.2 E->F and Stage 4.3 F->G are withheld from the public trajectory.",
             "Do not use this run for design decisions.",
+            "HIGH_VELOCITY_PLAUSIBILITY_REVIEW_PENDING",
+            "UNAVAILABLE_INCOMPLETE_CYCLE: daily metrics require a complete A→H cycle.",
         ]
 
     result = SimulationResult(
@@ -597,7 +614,10 @@ def simulate(inputs: SimulationInputs) -> SimulationResult:
         createdAt=created_at,
         validationRows=[],
         physicalScope=physical_scope,
-        terminalEvent="F_FILM_VELOCITY_ZERO" if chain_certified else "E_SLUG_BASE_REACHED_SURFACE",
+        terminalEvent=("F_FILM_VELOCITY_ZERO" if chain_certified else
+                       "E_SLUG_BASE_REACHED_SURFACE" if dynamic_de.event_e_reached else
+                       "GLV_CLOSE_BEFORE_E_SOURCE_BLOCK" if dynamic_de.glv_closure_time_s is not None else
+                       dynamic_de.terminal_reason),
         caseId=inputs.caseId,
         referenceClassification=REFERENCE_CASES[inputs.caseId].classification,
         diagnostics=diagnostics,

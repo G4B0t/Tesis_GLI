@@ -54,10 +54,10 @@ def test_health_and_cors_for_vite_frontend():
 def test_physical_scope_and_reference_cases_are_available():
     scope = physical_scope()
     assert scope.validationLevel == "provisional"
-    assert scope.terminalEvent == "E_SLUG_BASE_REACHED_SURFACE"
-    assert scope.certifiedStages == ["A_B", "B_C", "C_D", "D_E"]
-    assert scope.eventOrder[-1] == "E_SLUG_BASE_REACHED_SURFACE"
-    assert scope.physicalScope.startswith("NOT_SOURCE_CERTIFIED_A_TO_F:")
+    assert scope.terminalEvent == "GLV_CLOSE_BEFORE_E_SOURCE_BLOCK"
+    assert scope.certifiedStages == []
+    assert scope.eventOrder[-1] == "GLV_CLOSE_BEFORE_E_SOURCE_BLOCK"
+    assert scope.physicalScope.startswith("NOT_SOURCE_CERTIFIED_A_TO_E:")
 
     cases = {case.caseId: case for case in reference_cases()}
     assert cases["santos-gli-50-70-80"].classification == "full_case"
@@ -69,8 +69,8 @@ def test_api_simulation_response_exposes_source_block_at_e(monkeypatch, tmp_path
     monkeypatch.setenv("GLI_SIMULATION_DB_PATH", str(tmp_path / "simulations.sqlite3"))
     result = create_simulation(santos_input())
     assert result.validationLevel == "failed"
-    assert result.terminalEvent == "E_SLUG_BASE_REACHED_SURFACE"
-    assert result.physicalScope.startswith("NOT_SOURCE_CERTIFIED_A_TO_F:")
+    assert result.terminalEvent == "GLV_CLOSE_BEFORE_E_SOURCE_BLOCK"
+    assert result.physicalScope.startswith("NOT_SOURCE_CERTIFIED_A_TO_E:")
     assert result.points[-1].stage == "D_E"
     assert result.metrics.duration == result.points[-1].t
     assert result.diagnostics is not None
@@ -89,7 +89,9 @@ def test_api_simulation_response_exposes_source_block_at_e(monkeypatch, tmp_path
         "stageDurations",
     }
     engineering = {metric.name: metric for metric in result.diagnostics.engineeringMetrics}
-    assert engineering["cyclesPerDay"].value == 86400 / result.metrics.duration
+    for name in ("cyclesPerDay", "estimatedDailyLiquid", "estimatedDailyInjectedGas"):
+        assert engineering[name].value is None
+        assert engineering[name].certification == "UNAVAILABLE_INCOMPLETE_CYCLE"
     assert engineering["producedLiquidPerCycle"].value == result.points[-1].producedVolume
     assert engineering["injectedGasPerCycle"].value == result.diagnostics.gasInjectedVolume
     assert engineering["estimatedDailyLiquid"].formula
@@ -113,8 +115,8 @@ def test_scenario_comparison_contract():
 
     assert len(comparison.scenarios) == 2
     assert comparison.scenarios[0].summary.name == "Base"
-    assert comparison.scenarios[0].summary.estimatedDailyLiquid is not None
-    assert comparison.scenarios[1].summary.deltaDailyLiquidPercent is not None
+    assert comparison.scenarios[0].summary.estimatedDailyLiquid is None
+    assert comparison.scenarios[1].summary.deltaDailyLiquidPercent is None
 
 
 def test_saved_simulation_and_timeline_contract(monkeypatch, tmp_path):
@@ -132,10 +134,10 @@ def test_saved_simulation_and_timeline_contract(monkeypatch, tmp_path):
         "B_GAS_LIFT_VALVE_OPENS",
         "C_MOTOR_VALVE_CLOSES",
         "D_SLUG_TOP_REACHED_SURFACE",
-        "E_SLUG_BASE_REACHED_SURFACE",
+        "GLV_CLOSE_BEFORE_E_SOURCE_BLOCK",
     ]
     assert [segment.stage for segment in timeline.segments] == ["A_B", "B_C", "C_D", "D_E"]
-    assert timeline.resampledSeries[-1].exactEvent == "E_SLUG_BASE_REACHED_SURFACE"
+    assert timeline.resampledSeries[-1].exactEvent == "GLV_CLOSE_BEFORE_E_SOURCE_BLOCK"
 
 
 def test_frozen_frontend_fixture_is_identified_as_pre_milestone16_reference():

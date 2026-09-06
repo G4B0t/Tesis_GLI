@@ -14,6 +14,10 @@ from .simulation_service import simulate
 def engineering_value(result: SimulationResult, name: str) -> float | None:
     """Return a named engineering metric from a simulation result."""
 
+    if name in {"estimatedDailyLiquid", "estimatedDailyInjectedGas", "cyclesPerDay"}:
+        # Also suppress stale stored/synthetic metrics from incomplete runs.
+        if result.validationLevel in {"failed", "out_of_domain"} or result.terminalEvent != "H_INITIAL_LIQUID_HEIGHT_RESTORED":
+            return None
     if result.diagnostics is None:
         return None
     for metric in result.diagnostics.engineeringMetrics:

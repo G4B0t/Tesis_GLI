@@ -27,7 +27,7 @@ class Milestone15Diagnostic:
     minimum_raw_reservoir_rate_m3_s: float | None
     gas_balance_normalized_residual: float | None
     liquid_balance_normalized_residual: float | None
-    stage42_eos_density_relative_residual: float
+    stage42_eos_density_relative_residual: float | None
     blocking_reason: str
 
 
@@ -48,13 +48,13 @@ def run_milestone15_diagnostic(
     _p, _ab, _bc, _cdc, _cd, de, _reference_ef = run_corrected_a_to_f_chain(
         params, max_step_s=af_max_step_s
     )
-    audit = audit_stage_42_initial_state(_p, de)
+    audit = audit_stage_42_initial_state(_p, de) if de.event_e_reached else None
     reason = (
         "Stage 4.2 cannot create a physical F state by identity; F->G was not run "
         "and no safety horizon is reported as an event time."
     )
     return Milestone15Diagnostic(
-        status="NOT_READY_FOR_GH",
+        status="BLOCKED_BY_SOURCE" if "SOURCE_AMBIGUITY" in de.terminal_reason else "NOT_READY_FOR_GH",
         safety_horizon_s=float(safety_horizon_s),
         legacy=EventCandidateDiagnostic(
             name="legacy_pressure_recovery",
@@ -76,6 +76,6 @@ def run_milestone15_diagnostic(
         minimum_raw_reservoir_rate_m3_s=None,
         gas_balance_normalized_residual=None,
         liquid_balance_normalized_residual=None,
-        stage42_eos_density_relative_residual=audit.eos_density_relative_residual,
-        blocking_reason=reason,
+        stage42_eos_density_relative_residual=audit.eos_density_relative_residual if audit else None,
+        blocking_reason=reason + " " + de.terminal_reason,
     )

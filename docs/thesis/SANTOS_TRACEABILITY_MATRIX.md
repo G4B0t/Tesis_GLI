@@ -1,5 +1,16 @@
 # Matriz de trazabilidad Santos → ecuaciones → código
 
+## Estado vigente — Milestone 1.7
+
+`BLOCKED_BY_SOURCE` / `NOT_SOURCE_CERTIFIED_A_TO_E`. El RHS Stage 3
+transporta D por identidad, mantiene GLV abierta y usa 4.1.53 sin piso físico.
+La trayectoria disponible cierra GLV con 181.108 m de golfada remanente;
+la transición pre-E de dos columnas no está resuelta en la fuente revisada.
+No hay E/F/G físico. La correlación GLV heredada de Stage 2 es un proxy,
+no 4.1.13/.15; la conservación numérica no certifica la cadena fuente.
+Ver `STAGE_DE_SANTOS_EQUATION_CONTRACT.md`, `MILESTONE_1_7_REPORT.md`
+y `THESIS_WRITING_MAP.md`. Los resultados 1.5/1.6 abajo son históricos.
+
 Fuente primaria: O. G. dos Santos, capítulo 4 (modelo matemático), capítulo 5 (aplicación), capítulo 6 (ciclo estabilizado), capítulo 7 (sensibilidad) y capítulo 8 (optimización). La copia local es mayormente escaneada; la numeración impresa está desplazada aproximadamente 19 páginas respecto del PDF. Las notas versionadas del repositorio cubren principalmente el capítulo 5, páginas impresas 117–144.
 
 ## 1. Eventos físicos A–H
@@ -8,8 +19,8 @@ Fuente primaria: O. G. dos Santos, capítulo 4 (modelo matemático), capítulo 5
 |---|---|---|
 | A | abre válvula motora; inicia inyección | `t=0`, control de inyección activo |
 | B | abre GLV | equilibrio de fuerza/presión de apertura |
-| C | cara superior del tapón alcanza superficie | posición superior = profundidad de válvula/superficie según coordenada |
-| D | comienza producción del tapón | frente del tapón entra al tramo productor |
+| C | cierra válvula motora | fin del intervalo de inyección superficial |
+| D | cara superior del tapón alcanza superficie; comienza producción | tope = z_v |
 | E | cara inferior del tapón alcanza superficie | base del tapón = superficie |
 | F | película alcanza velocidad media cero | `v_f = 0` |
 | G | equilibrio final de descompresión en la formulación específica 4.3 | `P_t3−P_ts−rho_g g(H_gv−h_l)=0`; la recuperación de `P_t1` queda diagnóstica |
@@ -24,9 +35,9 @@ En el ejemplo de Santos, la fase 4.1 de descompresión no aparece porque la GLV 
 | A→B, inyección | condiciones 5.1–5.15; 4.1.6, 4.1.10, 4.1.17–19 | presiones casing/tubing, gas inyectado, válvula motora; geometría/EOS | `initial_conditions.py`, `stage1_dynamic.py`, `valves.py` | IMPLEMENTADO |
 | B→C, elevación con inyección | Tabla 5.1: 4.1.6, .9, .17–.19, .26, .28, .32, .35, .40, .46, .48, .50 | presiones, densidades, posiciones/velocidades de tapón y burbuja, película, caudal GLV | `stage_bc_common.py` modo Santos | IMPLEMENTADO |
 | C→D, elevación tras cierre motor | mismo sistema de etapa 2; cierre GLV como evento interno | estado canónico de 14 componentes; enclavamiento GLV; balances gas/líquido | `stage_cd_common.py` corregido | IMPLEMENTADO |
-| D→E, producción | etapa 3; 4.1.53 sustituye relación de elevación correspondiente | salida de tapón, gas y película; volumen producido | `stage_de_dynamic.py` corregido | IMPLEMENTADO |
-| E→F, descompresión fase II | Tabla 5.1: 4.1.76, .80, .83, .84, .87, .89, .90 | sistema exacto de siete variables, `V_g=A_B(z_v-h_l)`, evento `v_f=0` | `stage_ef_dynamic.py`, `STAGE_EF_SANTOS_EQUATION_CONTRACT.md` | IMPLEMENTADO; BLOQUEADO EN E POR INCOMPATIBILIDAD D→E/4.1.90 |
-| F→G, descompresión fase III | 4.1.89, .94, .97, .107, .108; cierres .24–.25 y .95–.103 | entrada F por identidad física; sin ledger→altura ni media→fondo; evento de equilibrio de momento | `stage_fg_dynamic.py`, `audit_stage_fg.py` | NO EJECUTADO EN CASO BASE — NOT_READY_FOR_GH |
+| D→E, producción | Tabla 5.1: .6/.9/.17/.18/.19/.26/.28/.32/.35/.40/.48/.50/.53 | identidad canónica D, Pt2 diferencial, masa transferida GLV y ledgers | `stage_de_santos.py`, contrato Stage DE | IMPLEMENTADO HASTA BLOQUEO PRE-E; E NO DISPONIBLE |
+| E→F, descompresión fase II | Tabla 5.1: 4.1.76, .80, .83, .84, .87, .89, .90 | sistema exacto de siete variables, `V_g=A_B(z_v-h_l)`, evento `v_f=0` | `stage_ef_dynamic.py`, `STAGE_EF_SANTOS_EQUATION_CONTRACT.md` | IMPLEMENTADO; NO EJECUTADO, E FÍSICO NO DISPONIBLE EN M1.7 |
+| F→G, descompresión fase III | 4.1.89, .94, .97, .107, .108; cierres .24–.25 y .95–.103 | entrada F por identidad física; sin ledger→altura ni media→fondo; evento de equilibrio de momento | `stage_fg_dynamic.py`, `audit_stage_fg.py` | NO EJECUTADO EN CASO BASE — BLOCKED_BY_SOURCE |
 | G→H, alimentación | 4.1.94, .107, .109, con .95 y cierres geométricos/EOS | película descendente y líquido de formación alimentan columna; presión hidrostática; evento longitud inicial | no hay módulo ni evento terminal H integrado | FALTANTE |
 
 ## 3. Contrato implementado F→G
@@ -44,7 +55,11 @@ Sistema físico de la fase 4.3:
 
 El estado implementado es `[ρ_gt3, P_t3, P_t1, h_l, y, V_return, V_res, m_g,out]`, en SI. `A_B`, `A_f`, `q_f`, `ρ_gs`, `ρ_g`, `v_g`, `v_gs`, `ρ_gt1` y los inventarios se calculan algebraicamente con funciones nombradas. Los tres últimos estados son ledgers de procedencia y no sustituyen las cinco variables físicas del sistema Santos.
 
-Condiciones iniciales en F: se transfieren por identidad masa de gas, `y`, película, producido, fallback y entrada acumulada. E→F integra el ledger dinámico `q_res(P_t1)`. Como E→F almacena densidad/presión media del núcleo y Santos 4.3 necesita `ρ_gt3/P_t3` de fondo, el mapa usa 4.1.96 y EOS 4.1.101 conservando exactamente la masa. Esa transformación espacial hace que `P_wb>P_r` al inicio de FG; el caudal bruto negativo se conserva y clasifica como inválido para la IPR productora.
+Condiciones iniciales vigentes en F: se exigen `h_l`, `P_t1`, `P_t3`,
+densidad media, masa, película y ledgers físicos explícitos, por identidad.
+Desde M1.6 NO se permite reconstruir altura desde ledgers ni presión de fondo
+desde una media. En M1.7 no existe F físico. Las transformaciones y el flujo
+inverso descritos para M1.5 fueron diagnósticos históricos, no el mapa vigente.
 
 Evento terminal G implementado: `P_t3−P_ts−ρ_g g(z_v−h_l)=0`, dirección `−1`. `P_t1−P_to,initial=0` se registra como diagnóstico no terminal. G no se etiqueta como ciclo completo.
 
