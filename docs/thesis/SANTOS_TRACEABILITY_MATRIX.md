@@ -1,15 +1,17 @@
 # Matriz de trazabilidad Santos → ecuaciones → código
 
-## Estado vigente — Milestone 1.7
+## Estado vigente — Milestone 1.7R
 
 `BLOCKED_BY_SOURCE` / `NOT_SOURCE_CERTIFIED_A_TO_E`. El RHS Stage 3
 transporta D por identidad, mantiene GLV abierta y usa 4.1.53 sin piso físico.
-La trayectoria disponible cierra GLV con 181.108 m de golfada remanente;
-la transición pre-E de dos columnas no está resuelta en la fuente revisada.
-No hay E/F/G físico. La correlación GLV heredada de Stage 2 es un proxy,
-no 4.1.13/.15; la conservación numérica no certifica la cadena fuente.
-Ver `STAGE_DE_SANTOS_EQUATION_CONTRACT.md`, `MILESTONE_1_7_REPORT.md`
-y `THESIS_WRITING_MAP.md`. Los resultados 1.5/1.6 abajo son históricos.
+La ruta científica B→C/C→D/D→E usa ahora una función GLV central de Santos
+4.1.13/.15, no el proxy histórico. La trayectoria reconciliada cierra GLV con
+178.700 m de golfada remanente; la transición pre-E de dos columnas no está
+resuelta en la fuente revisada. 4.1.28 omite `df_B/dt`; por consistencia con
+4.1.27 se congela `f_B` desde B, pero Santos no publica la correlación
+numérica de esa fricción (`SOURCE_MISSING`). No hay E/F/G físico. Ver
+`MILESTONE_1_7R_REPORT.md`, `milestone_1_7R_results.json` y
+`THESIS_WRITING_MAP.md`. Los resultados 1.5/1.6/1.7 abajo son históricos.
 
 Fuente primaria: O. G. dos Santos, capítulo 4 (modelo matemático), capítulo 5 (aplicación), capítulo 6 (ciclo estabilizado), capítulo 7 (sensibilidad) y capítulo 8 (optimización). La copia local es mayormente escaneada; la numeración impresa está desplazada aproximadamente 19 páginas respecto del PDF. Las notas versionadas del repositorio cubren principalmente el capítulo 5, páginas impresas 117–144.
 
@@ -33,9 +35,9 @@ En el ejemplo de Santos, la fase 4.1 de descompresión no aparece porque la GLV 
 | Etapa | Fuente/equaciones | Variables y cierres principales | Código actual | Estado |
 |---|---|---|---|---|
 | A→B, inyección | condiciones 5.1–5.15; 4.1.6, 4.1.10, 4.1.17–19 | presiones casing/tubing, gas inyectado, válvula motora; geometría/EOS | `initial_conditions.py`, `stage1_dynamic.py`, `valves.py` | IMPLEMENTADO |
-| B→C, elevación con inyección | Tabla 5.1: 4.1.6, .9, .17–.19, .26, .28, .32, .35, .40, .46, .48, .50 | presiones, densidades, posiciones/velocidades de tapón y burbuja, película, caudal GLV | `stage_bc_common.py` modo Santos | IMPLEMENTADO |
-| C→D, elevación tras cierre motor | mismo sistema de etapa 2; cierre GLV como evento interno | estado canónico de 14 componentes; enclavamiento GLV; balances gas/líquido | `stage_cd_common.py` corregido | IMPLEMENTADO |
-| D→E, producción | Tabla 5.1: .6/.9/.17/.18/.19/.26/.28/.32/.35/.40/.48/.50/.53 | identidad canónica D, Pt2 diferencial, masa transferida GLV y ledgers | `stage_de_santos.py`, contrato Stage DE | IMPLEMENTADO HASTA BLOQUEO PRE-E; E NO DISPONIBLE |
+| B→C, elevación con inyección | Tabla 5.1: 4.1.6, .9, .13/.15, .17–.19, .26, .28, .32, .35, .40, .46, .48, .50 | presiones, densidades, posiciones/velocidades de tapón y burbuja, película, GLV fuente y `f_B` fijo | `stage_bc_common.py` modo Santos | IMPLEMENTADO; correlación numérica de `f_B` SOURCE_MISSING |
+| C→D, elevación tras cierre motor | mismo sistema de etapa 2; cierre GLV como evento interno | estado canónico de 14 componentes; GLV 4.1.13/.15 central; `f_B` heredado sin recalcular | `stage_cd_common.py` corregido | IMPLEMENTADO HASTA D |
+| D→E, producción | Tabla 5.1: .6/.9/.13/.15/.17/.18/.19/.26/.28/.32/.35/.40/.48/.50/.53 | identidad canónica D, Pt2 diferencial, masa transferida GLV y ledgers | `stage_de_santos.py`, contrato Stage DE | IMPLEMENTADO HASTA BLOQUEO PRE-E; E NO DISPONIBLE |
 | E→F, descompresión fase II | Tabla 5.1: 4.1.76, .80, .83, .84, .87, .89, .90 | sistema exacto de siete variables, `V_g=A_B(z_v-h_l)`, evento `v_f=0` | `stage_ef_dynamic.py`, `STAGE_EF_SANTOS_EQUATION_CONTRACT.md` | IMPLEMENTADO; NO EJECUTADO, E FÍSICO NO DISPONIBLE EN M1.7 |
 | F→G, descompresión fase III | 4.1.89, .94, .97, .107, .108; cierres .24–.25 y .95–.103 | entrada F por identidad física; sin ledger→altura ni media→fondo; evento de equilibrio de momento | `stage_fg_dynamic.py`, `audit_stage_fg.py` | NO EJECUTADO EN CASO BASE — BLOCKED_BY_SOURCE |
 | G→H, alimentación | 4.1.94, .107, .109, con .95 y cierres geométricos/EOS | película descendente y líquido de formación alimentan columna; presión hidrostática; evento longitud inicial | no hay módulo ni evento terminal H integrado | FALTANTE |

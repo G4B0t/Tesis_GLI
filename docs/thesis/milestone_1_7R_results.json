@@ -1,0 +1,41 @@
+{
+  "milestone": "M1.7R",
+  "status": "BLOCKED_BY_SOURCE",
+  "source_status": "NOT_SOURCE_CERTIFIED_A_TO_E",
+  "times_absolute_s": {
+    "B": 32.64015584189688,
+    "C": 59.44301178760309,
+    "D": 514.4859524918706,
+    "GLV_close": 544.020152393426,
+    "E": null
+  },
+  "source_chain": {
+    "B_to_C_reached": true,
+    "C_to_D_reached": true,
+    "GLV_open_at_D": true,
+    "GLV_rate_at_D_kg_s": 0.19352983552637384,
+    "frozen_bubble_friction_factor": 0.1278397857624769
+  },
+  "closure_before_E": {
+    "D_to_close_s": 29.53419990155529,
+    "remaining_slug_m": 178.70040706952636,
+    "terminal_reason": "SOURCE_AMBIGUITY_GLV_CLOSE_BEFORE_E",
+    "E_reached": false
+  },
+  "M17_comparison": {
+    "delta_D_to_close_s": 0.9693733900292898,
+    "delta_remaining_slug_m": -2.4075481574736273,
+    "delta_GLV_rate_D_kg_s": -0.003788878165626147
+  },
+  "verification": {
+    "D_identity_max_abs_error": 0.0,
+    "eq27_max_abs_drift_pa": 0.000453997403383255,
+    "gas_balance_relative": 3.465980762474665e-16,
+    "liquid_balance_relative": 3.1418007072702553e-10,
+    "convergence_D_to_close_s": [29.53419989341152, 29.53419990155529, 29.534199902323095]
+  },
+  "downstream": {
+    "stage42_executed": false,
+    "reason": "Physical E is unavailable; GLV closes materially before E."
+  }
+}

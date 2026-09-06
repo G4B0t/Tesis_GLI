@@ -2,6 +2,56 @@
 
 from math import sqrt
 
+from .parameters import GLIParameters
+
+
+def santos_standard_gas_density(params: GLIParameters) -> float:
+    """Gas density at the declared standard state for Santos 4.1.14/.15."""
+    gas = params.gas
+    return (
+        gas.standard_pressure_pa
+        * gas.gas_molar_mass_kg_mol
+        / (gas.gas_constant_j_mol_k * gas.standard_temperature_k)
+    )
+
+
+def santos_glv_mass_rate(
+    casing_pressure_pa: float,
+    tubing_pressure_pa: float,
+    params: GLIParameters,
+) -> float:
+    """Santos 4.1.13/.15 GLV mass flow, kg/s.
+
+    Equation 4.1.13 supplies the subcritical nozzle expression.  Below its
+    stationary critical pressure ratio the value is held at that maximum,
+    which is the physically continuous critical-flow extension of the same
+    expression.  The calculation is central so B->C, C->D and D->E cannot
+    switch GLV correlations at a stage boundary.
+    """
+    if casing_pressure_pa <= tubing_pressure_pa:
+        return 0.0
+    k = params.valves.adiabatic_constant
+    if k <= 1.0:
+        raise ValueError("Santos GLV adiabatic constant must exceed one")
+    ratio = tubing_pressure_pa / casing_pressure_pa
+    critical_ratio = (2.0 / (k + 1.0)) ** (k / (k - 1.0))
+    effective_ratio = max(ratio, critical_ratio)
+    flow_term = (
+        2.0
+        * k
+        / (k - 1.0)
+        * (effective_ratio ** (2.0 / k) - effective_ratio ** ((k + 1.0) / k))
+    )
+    volumetric_rate = (
+        0.04842
+        * params.valves.gas_lift_cd
+        * params.valves.port_area_m2
+        * casing_pressure_pa
+        / sqrt(params.fluids.gas_relative_density * params.gas.temp_c2_k)
+        * sqrt(max(flow_term, 0.0))
+    )
+    return volumetric_rate * santos_standard_gas_density(params)
+
 
 def gas_lift_valve_bellows_pressure(
     tubing_pressure_open_pa: float,
@@ -14,7 +64,10 @@ def gas_lift_valve_bellows_pressure(
     P_bt = P_vo (1 - R_v) + P_to R_v
     """
 
-    return casing_pressure_open_pa * (1.0 - area_ratio_rv) + tubing_pressure_open_pa * area_ratio_rv
+    return (
+        casing_pressure_open_pa * (1.0 - area_ratio_rv)
+        + tubing_pressure_open_pa * area_ratio_rv
+    )
 
 
 def gas_lift_valve_resultant_force(
@@ -68,7 +121,9 @@ def motor_valve_gas_rate(
     )
 
 
-def bubble_velocity(liquid_slug_velocity_m_s: float, coefficient_a: float, tubing_diameter_m: float) -> float:
+def bubble_velocity(
+    liquid_slug_velocity_m_s: float, coefficient_a: float, tubing_diameter_m: float
+) -> float:
     """Gas bubble velocity from the liquid slug velocity.
 
     Santos, eqs. 4.1.49 and 4.1.51:

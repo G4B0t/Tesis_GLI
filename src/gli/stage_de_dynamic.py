@@ -1,18 +1,20 @@
 """Slug-production stage D->E with an explicit surface discharge boundary."""
+
 from dataclasses import dataclass
 from math import pi, sqrt
+
 import numpy as np
 from scipy.integrate import quad, solve_ivp
 
+from .fallback import fallback_rate_m3_s
 from .geometry import tubing_area
 from .initial_conditions import GRAVITY_M_S2, initial_stage_1
 from .parameters import GLIParameters
-from .stage_bc_dynamic import _gas_lift_mass_rate
-from .stage_cd_dynamic import StageCDResult, simulate_stage_c_to_d
-from .stage1_dynamic import state_from_mass
-from .valves import gas_lift_valve_resultant_force
-from .fallback import fallback_rate_m3_s
 from .reservoir import reservoir_inflow_from_pt1
+from .stage1_dynamic import state_from_mass
+from .stage_bc_dynamic import _historical_glv_proxy_mass_rate
+from .stage_cd_dynamic import StageCDResult, simulate_stage_c_to_d
+from .valves import gas_lift_valve_resultant_force
 
 
 @dataclass(frozen=True)
@@ -56,10 +58,16 @@ class StageDEResult:
     source_diagnostics: dict | None = None
 
 
-def simulate_stage_d_to_e(params: GLIParameters, *, stage_c_d: StageCDResult | None = None,
-                          max_time_s: float = 180.0, max_step_s: float = 0.1,
-                          rtol: float = 1e-8, atol: float = 1e-10,
-                          rhs_mode: str = "legacy") -> StageDEResult:
+def simulate_stage_d_to_e(
+    params: GLIParameters,
+    *,
+    stage_c_d: StageCDResult | None = None,
+    max_time_s: float = 180.0,
+    max_step_s: float = 0.1,
+    rtol: float = 1e-8,
+    atol: float = 1e-10,
+    rhs_mode: str = "legacy",
+) -> StageDEResult:
     """Continue the exact D state until the slug base reaches the surface.
 
     At D, hL becomes a fixed outlet boundary at surface pressure.  No state is
@@ -70,12 +78,24 @@ def simulate_stage_d_to_e(params: GLIParameters, *, stage_c_d: StageCDResult | N
         raise ValueError("Stage C->D must reach D")
     if rhs_mode == "santos_corrected":
         from .stage_de_santos import simulate_stage3
-        return simulate_stage3(params, cd, max_time_s=max_time_s,
-                               max_step_s=max_step_s, rtol=rtol, atol=atol)
+
+        return simulate_stage3(
+            params,
+            cd,
+            max_time_s=max_time_s,
+            max_step_s=max_step_s,
+            rtol=rtol,
+            atol=atol,
+        )
     if rhs_mode == "milestone16_reference":
         return _simulate_stage_d_to_e_milestone16(
-            params, cd, max_time_s=max_time_s, max_step_s=max_step_s,
-            rtol=rtol, atol=atol)
+            params,
+            cd,
+            max_time_s=max_time_s,
+            max_step_s=max_step_s,
+            rtol=rtol,
+            atol=atol,
+        )
     if rhs_mode != "legacy":
         raise ValueError(f"unknown D->E rhs_mode: {rhs_mode}")
     initial = initial_stage_1(params)
@@ -86,28 +106,59 @@ def simulate_stage_d_to_e(params: GLIParameters, *, stage_c_d: StageCDResult | N
     Ab = At - Af
     vf0 = float(cd.fallback_volume_m3[-1])
     total_liquid0 = At * params.geometry.initial_slug_length_m
-    y0 = np.array([cd.annulus_mass_kg[-1], cd.bubble_mass_kg[-1],
-                   cd.h_b_m[-1], cd.v_b_m_s[-1], vf0, 0.0], dtype=float)
+    y0 = np.array(
+        [
+            cd.annulus_mass_kg[-1],
+            cd.bubble_mass_kg[-1],
+            cd.h_b_m[-1],
+            cd.v_b_m_s[-1],
+            vf0,
+            0.0,
+        ],
+        dtype=float,
+    )
 
     def values(state):
         mc, mb, hb, vb, vfb, vp = state
         casing = state_from_mass(float(mc), params)
         bubble_volume = max(Ab * hb, 1e-12)
-        pt = mb * gas.z_t1 * gas.gas_constant_j_mol_k * gas.temp_t1_k / (
-            gas.gas_molar_mass_kg_mol * bubble_volume)
-        force = gas_lift_valve_resultant_force(casing["p_c2"], initial["p_bt"], pt,
-                                                params.valves.rv, params.valves.bellows_area_m2)
+        pt = (
+            mb
+            * gas.z_t1
+            * gas.gas_constant_j_mol_k
+            * gas.temp_t1_k
+            / (gas.gas_molar_mass_kg_mol * bubble_volume)
+        )
+        force = gas_lift_valve_resultant_force(
+            casing["p_c2"],
+            initial["p_bt"],
+            pt,
+            params.valves.rv,
+            params.valves.bellows_area_m2,
+        )
         opened = force >= -1e-6 and casing["p_c2"] > pt
-        mgl = _gas_lift_mass_rate(casing["p_c2"], pt, casing["rho_c2"], params) if opened else 0.0
+        mgl = (
+            _historical_glv_proxy_mass_rate(
+                casing["p_c2"], pt, casing["rho_c2"], params
+            )
+            if opened
+            else 0.0
+        )
         film = Af * hb
-        thickness=params.geometry.tubing_diameter_m/2-sqrt(max(Ab,0.0)/np.pi)
-        qfb=fallback_rate_m3_s(params.geometry.tubing_diameter_m,thickness,
-            initial['rho_l'],params.fluids.liquid_viscosity_pa_s,film)
+        thickness = params.geometry.tubing_diameter_m / 2 - sqrt(max(Ab, 0.0) / np.pi)
+        qfb = fallback_rate_m3_s(
+            params.geometry.tubing_diameter_m,
+            thickness,
+            initial["rho_l"],
+            params.fluids.liquid_viscosity_pa_s,
+            film,
+        )
         qprod = max((At - Af) * vb - qfb, 0.0)
         vl = qprod / At
         slug = At * max(H - hb, 0.0)
         pwf = pt + initial["rho_l"] * GRAVITY_M_S2 * max(
-            (params.geometry.perforation_depth_m or H) - H, 0.0)
+            (params.geometry.perforation_depth_m or H) - H, 0.0
+        )
         return casing, pt, pwf, force, opened, mgl, qfb, qprod, vl, slug, film
 
     def rhs(_t, state):
@@ -117,16 +168,35 @@ def simulate_stage_d_to_e(params: GLIParameters, *, stage_c_d: StageCDResult | N
         # mass singularity as the last part of the slug crosses the wellhead.
         length = max(H - hb, 20.0)
         rho = initial["rho_l"]
-        friction = params.coefficients.liquid_friction_factor * 0.5 * rho * vb * abs(vb) * length / params.geometry.tubing_diameter_m
-        acceleration = (x[1] - initial["p_t3"] - rho * GRAVITY_M_S2 * length - friction) / (rho * length)
+        friction = (
+            params.coefficients.liquid_friction_factor
+            * 0.5
+            * rho
+            * vb
+            * abs(vb)
+            * length
+            / params.geometry.tubing_diameter_m
+        )
+        acceleration = (
+            x[1] - initial["p_t3"] - rho * GRAVITY_M_S2 * length - friction
+        ) / (rho * length)
         return [-x[5], x[5], vb, acceleration, x[6], x[7]]
 
     def event_e(_t, state):
         return state[2] - H
+
     event_e.terminal = True
     event_e.direction = 1.0
-    sol = solve_ivp(rhs, (0.0, max_time_s), y0, events=event_e, dense_output=True,
-                    max_step=max_step_s, rtol=rtol, atol=atol)
+    sol = solve_ivp(
+        rhs,
+        (0.0, max_time_s),
+        y0,
+        events=event_e,
+        dense_output=True,
+        max_step=max_step_s,
+        rtol=rtol,
+        atol=atol,
+    )
     reached = bool(sol.t_events[0].size)
     end = float(sol.t_events[0][0]) if reached else float(sol.t[-1])
     times = np.linspace(0.0, end, max(2, int(np.ceil(end / max_step_s)) + 1))
@@ -139,10 +209,31 @@ def simulate_stage_d_to_e(params: GLIParameters, *, stage_c_d: StageCDResult | N
     liquid_error = float(np.max(np.abs(inventory - total_liquid0)) / total_liquid0)
     pc1 = np.array([x[0]["p_c1"] for x in derived])
     pc2 = np.array([x[0]["p_c2"] for x in derived])
-    return StageDEResult(times, states[0], states[1], states[2], np.full_like(times, H),
-                         states[3], arr(8), arr(7), states[5], arr(9), arr(10), states[4],
-                         pc1, pc2, arr(1), arr(2), arr(5),
-                         arr(3), arr(4), reached, end, gas_error, liquid_error)
+    return StageDEResult(
+        times,
+        states[0],
+        states[1],
+        states[2],
+        np.full_like(times, H),
+        states[3],
+        arr(8),
+        arr(7),
+        states[5],
+        arr(9),
+        arr(10),
+        states[4],
+        pc1,
+        pc2,
+        arr(1),
+        arr(2),
+        arr(5),
+        arr(3),
+        arr(4),
+        reached,
+        end,
+        gas_error,
+        liquid_error,
+    )
 
 
 def _simulate_stage_d_to_e_milestone16(
@@ -179,10 +270,23 @@ def _simulate_stage_d_to_e_milestone16(
     rhoD = float(cd.bubble_mass_kg[-1]) / VgD
     ptD = float(cd.p_tubing_pa[-1])
     # mc, mg, rho_g, pt1, vB, vf, y, film_volume, hB, vL, fallback, produced
-    y0 = np.array([
-        cd.annulus_mass_kg[-1], cd.bubble_mass_kg[-1], rhoD, ptD, vgD, vfD,
-        yD, cd.film_volume_m3[-1], hbD, vlD, cd.fallback_volume_m3[-1], 0.0
-    ], dtype=float)
+    y0 = np.array(
+        [
+            cd.annulus_mass_kg[-1],
+            cd.bubble_mass_kg[-1],
+            rhoD,
+            ptD,
+            vgD,
+            vfD,
+            yD,
+            cd.film_volume_m3[-1],
+            hbD,
+            vlD,
+            cd.fallback_volume_m3[-1],
+            0.0,
+        ],
+        dtype=float,
+    )
 
     def geometry(y, hb):
         Ab = pi * (r - y) ** 2
@@ -195,8 +299,12 @@ def _simulate_stage_d_to_e_milestone16(
         Ab, Af, Vg = geometry(y, hb)
         casing = state_from_mass(float(mc), params)
         force = gas_lift_valve_resultant_force(
-            casing["p_c2"], initial["p_bt"], pt1,
-            params.valves.rv, params.valves.bellows_area_m2)
+            casing["p_c2"],
+            initial["p_bt"],
+            pt1,
+            params.valves.rv,
+            params.valves.bellows_area_m2,
+        )
         # The production-stage candidate is evaluated with the GLV latched
         # closed.  The force remains diagnostic until the mechanical hysteresis
         # model is reintroduced at this boundary.
@@ -207,11 +315,28 @@ def _simulate_stage_d_to_e_milestone16(
         L = max(H - hb, 1e-9)
         slug = At * max(H - hb, 0.0)
         pwf = pt1 + rho_l * GRAVITY_M_S2 * max(
-            (params.geometry.perforation_depth_m or H) - H, 0.0)
+            (params.geometry.perforation_depth_m or H) - H, 0.0
+        )
         qprod = max(At * vl, 0.0)
         qfb = max(-Af * vf, 0.0)
         qres = reservoir_inflow_from_pt1(params, pt1, rho_l)
-        return casing, Ab, Af, Vg, force, opened, mgl, pt2, pt3, L, slug, pwf, qprod, qfb, qres
+        return (
+            casing,
+            Ab,
+            Af,
+            Vg,
+            force,
+            opened,
+            mgl,
+            pt2,
+            pt3,
+            L,
+            slug,
+            pwf,
+            qprod,
+            qfb,
+            qres,
+        )
 
     def rhs(_t, state):
         mc, mg, rho_g, pt1, vg, vf, y, film, hb, vl, fb, prod = state
@@ -224,9 +349,13 @@ def _simulate_stage_d_to_e_milestone16(
         fl = params.coefficients.liquid_friction_factor
         Leff = max(L, 5.0)
         dvl = (
-            -vl * vl + (Af / At) * vf * vf + (Ab / At) * vg * vg
-            + (pt2 - pt3) / rho_l - GRAVITY_M_S2 * L
-            - fl * vl * abs(vl) * L / (2 * D) - 0.3 * vl * vl
+            -vl * vl
+            + (Af / At) * vf * vf
+            + (Ab / At) * vg * vg
+            + (pt2 - pt3) / rho_l
+            - GRAVITY_M_S2 * L
+            - fl * vl * abs(vl) * L / (2 * D)
+            - 0.3 * vl * vl
         ) / Leff
         dvg = params.coefficients.bubble_velocity_a * dvl
         dhb = vg
@@ -241,19 +370,36 @@ def _simulate_stage_d_to_e_milestone16(
         dmg = 0.0
         dVg = Ab * dhb + dAb * hb
         drho = dmg / Vg - rho_g * dVg / Vg
-        dpt = gas.z_t1 * gas.gas_constant_j_mol_k * gas.temp_t1_k / gas.gas_molar_mass_kg_mol * drho
+        dpt = (
+            gas.z_t1
+            * gas.gas_constant_j_mol_k
+            * gas.temp_t1_k
+            / gas.gas_molar_mass_kg_mol
+            * drho
+        )
         qfb = max(-Af * vf, 0.0)
         dfilm = qres - Af * vf + Af * dhb - qfb
         dprod = max(At * vl, 0.0)
-        return np.array([dmc, dmg, drho, dpt, dvg, dvf, dy, dfilm, dhb, dvl, qfb, dprod])
+        return np.array(
+            [dmc, dmg, drho, dpt, dvg, dvf, dy, dfilm, dhb, dvl, qfb, dprod]
+        )
 
     def event_e(_t, state):
         return state[8] - H
+
     event_e.terminal = True
     event_e.direction = 1.0
-    sol = solve_ivp(rhs, (0.0, max_time_s), y0, events=event_e,
-                    dense_output=True, max_step=max_step_s, rtol=rtol,
-                    atol=atol, method="Radau")
+    sol = solve_ivp(
+        rhs,
+        (0.0, max_time_s),
+        y0,
+        events=event_e,
+        dense_output=True,
+        max_step=max_step_s,
+        rtol=rtol,
+        atol=atol,
+        method="Radau",
+    )
     reached = bool(sol.t_events[0].size)
     end = float(sol.t_events[0][0]) if reached else float(sol.t[-1])
     times = np.linspace(0.0, end, max(2, int(np.ceil(end / max_step_s)) + 1))
@@ -267,24 +413,53 @@ def _simulate_stage_d_to_e_milestone16(
     inventory = arr(10) + states[7] + states[10] + states[11]
     qres_values = arr(14)
     qres_values = np.array([item.rate_m3_s for item in qres_values])
-    reservoir = np.array([
-        quad(
-            lambda time: reservoir_inflow_from_pt1(
-                params, float(sol.sol(time)[3]), rho_l
-            ).rate_m3_s,
-            0.0,
-            float(time),
-            epsabs=1e-12,
-            epsrel=1e-11,
-            limit=100,
-        )[0]
-        for time in times
-    ])
+    reservoir = np.array(
+        [
+            quad(
+                lambda time: reservoir_inflow_from_pt1(
+                    params, float(sol.sol(time)[3]), rho_l
+                ).rate_m3_s,
+                0.0,
+                float(time),
+                epsabs=1e-12,
+                epsrel=1e-11,
+                limit=100,
+            )[0]
+            for time in times
+        ]
+    )
     expected_inventory = inventory[0] + reservoir
-    liquid_error = float(np.max(np.abs(inventory - expected_inventory)) / max(abs(expected_inventory[-1]), 1e-12))
+    liquid_error = float(
+        np.max(np.abs(inventory - expected_inventory))
+        / max(abs(expected_inventory[-1]), 1e-12)
+    )
     inflow_valid = bool(all(item.physically_valid for item in arr(14)))
     return StageDEResult(
-        times, states[0], states[1], states[8], np.full_like(times, H),
-        states[4], states[9], arr(12), states[11], arr(10), states[7], states[10],
-        pc1, pc2, states[3], arr(11), arr(6), arr(4), arr(5),
-        reached, end, gas_error, liquid_error, states[5], states[2], inflow_valid, reservoir)
+        times,
+        states[0],
+        states[1],
+        states[8],
+        np.full_like(times, H),
+        states[4],
+        states[9],
+        arr(12),
+        states[11],
+        arr(10),
+        states[7],
+        states[10],
+        pc1,
+        pc2,
+        states[3],
+        arr(11),
+        arr(6),
+        arr(4),
+        arr(5),
+        reached,
+        end,
+        gas_error,
+        liquid_error,
+        states[5],
+        states[2],
+        inflow_valid,
+        reservoir,
+    )
